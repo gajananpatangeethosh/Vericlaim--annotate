@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+  body {
+    @apply m-0 bg-gray-50 text-gray-900 antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+      Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium
+           transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-brand-400/50 disabled:opacity-40 disabled:pointer-events-none;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-gray-600 hover:bg-gray-100 hover:text-gray-900 active:bg-gray-200;
+  }
+  .btn-ghost-active {
+    @apply btn bg-brand-100 text-brand-700 hover:bg-brand-200;
+  }
+  .btn-icon {
+    @apply btn p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700 active:bg-gray-200;
+  }
+  .toolbar-group {
+    @apply flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white p-0.5 shadow-card;
+  }
+  .card {
+    @apply rounded-xl border border-gray-200 bg-white shadow-card transition-shadow duration-150;
+  }
+  .card-hover:hover {
+    @apply shadow-cardhover border-gray-300;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+  .badge-info {
+    @apply badge bg-blue-100 text-blue-700;
+  }
+  .badge-warning {
+    @apply badge bg-orange-100 text-orange-700;
+  }
+  .badge-error {
+    @apply badge bg-red-100 text-red-700;
+  }
+  .badge-success {
+    @apply badge bg-green-100 text-green-700;
+  }
+  .scroll-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-gray-300;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+}
