@@ -7,6 +7,7 @@ import { normaliseBounds } from '../../utils/pdf'
 import type { TextSpan } from '../../utils/text-positions'
 import type { PageWithItems } from '../../utils/ai'
 import ValidationTooltip from '../ValidationTooltip/ValidationTooltip'
+import ClaimTooltip from '../ValidationTooltip/ClaimTooltip'
 
 interface Props {
   annotations: Annotation[]
@@ -332,6 +333,13 @@ export default function AnnotationLayer({
             {isValid && (
               <div className="hidden group-hover:block">
                 <ValidationTooltip annotation={ann} />
+              </div>
+            )}
+
+            {/* ── Highlight claim tooltip ── */}
+            {isHighlight && hov && (
+              <div className="hidden group-hover:block">
+                <ClaimTooltip annotation={ann} />
               </div>
             )}
 
