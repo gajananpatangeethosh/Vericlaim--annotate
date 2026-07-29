@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { useStore } from '../../store/useStore'
 import { exportAnnotations, importAnnotations, generateFakeValidations } from '../../utils/pdf'
 import { exportAnnotatedPDF } from '../../utils/export-pdf'
-import { savePdfBinary } from '../../utils/idb'
+import { savePdfBinary, PDF_KEYS } from '../../utils/idb'
 import { readFileAsDataURL } from '../../utils/pdf'
 import { TOOL_NAMES, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '../../utils/constants'
 import type { Tool } from '../../types'
@@ -20,6 +20,7 @@ const TOOL_ICONS: Record<string, string> = {
 
 export default function Toolbar() {
   const pdfMeta = useStore((s) => s.pdfMeta)
+  const referencePdfMeta = useStore((s) => s.referencePdfMeta)
   const numPages = useStore((s) => s.numPages)
   const annotations = useStore((s) => s.annotations)
   const zoom = useStore((s) => s.zoom)
@@ -29,6 +30,7 @@ export default function Toolbar() {
   const hasFuture = useStore((s) => s.future.length > 0)
 
   const setPdfMeta = useStore((s) => s.setPdfMeta)
+  const setReferencePdfMeta = useStore((s) => s.setReferencePdfMeta)
   const setZoom = useStore((s) => s.setZoom)
   const setCurrentTool = useStore((s) => s.setCurrentTool)
   const addAnnotation = useStore((s) => s.addAnnotation)
@@ -53,6 +55,7 @@ export default function Toolbar() {
 
   const importRef = useRef<HTMLInputElement>(null)
   const uploadRef = useRef<HTMLInputElement>(null)
+  const referenceUploadRef = useRef<HTMLInputElement>(null)
 
   const handleUpload = async (file: File) => {
     if (file.type !== 'application/pdf') {
@@ -63,13 +66,28 @@ export default function Toolbar() {
     setError(null)
     try {
       const dataUrl = await readFileAsDataURL(file)
-      await savePdfBinary(dataUrl)
+      await savePdfBinary(dataUrl, PDF_KEYS.brochure)
       useStore.getState().clearAll()
       setPdfMeta({ name: file.name, totalSize: file.size })
     } catch {
       setError('Failed to load PDF')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleReferenceUpload = async (file: File) => {
+    if (file.type !== 'application/pdf') {
+      setError('Please upload a PDF file for the reference')
+      return
+    }
+    setError(null)
+    try {
+      const dataUrl = await readFileAsDataURL(file)
+      await savePdfBinary(dataUrl, PDF_KEYS.reference)
+      setReferencePdfMeta({ name: file.name, totalSize: file.size })
+    } catch {
+      setError('Failed to load reference PDF')
     }
   }
 
@@ -93,6 +111,11 @@ export default function Toolbar() {
 
   const handleRunValidation = () => {
     if (!pdfMeta) return
+    const refMeta = useStore.getState().referencePdfMeta
+    if (!refMeta) {
+      setError('Upload a reference/research paper PDF first to run claim verification')
+      return
+    }
     const apiKey = useStore.getState().apiKey
     if (apiKey) {
       useStore.getState().runAiValidation()
@@ -119,12 +142,12 @@ export default function Toolbar() {
       <button
         className="btn-primary text-xs !py-1.5"
         onClick={() => uploadRef.current?.click()}
-        title="Upload PDF"
+        title="Upload Brochure PDF"
       >
         <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
         </svg>
-        <span className="hidden sm:inline">Upload</span>
+        <span className="hidden sm:inline">Brochure</span>
       </button>
       <input
         ref={uploadRef}
@@ -134,6 +157,31 @@ export default function Toolbar() {
         onChange={(e) => {
           const file = e.target.files?.[0]
           if (file) handleUpload(file)
+        }}
+      />
+
+      {/* Reference Upload */}
+      {referencePdfMeta ? (
+        <span className="flex items-center gap-1 rounded-lg bg-amber-50 border border-amber-200 px-2 py-1 text-[10px] text-amber-700 font-medium max-w-[140px] truncate" title={referencePdfMeta.name}>
+          📄 {referencePdfMeta.name}
+        </span>
+      ) : (
+        <button
+          className="btn-ghost text-xs !py-1.5"
+          onClick={() => referenceUploadRef.current?.click()}
+          title="Upload Reference/Research Paper PDF"
+        >
+          📚 Reference
+        </button>
+      )}
+      <input
+        ref={referenceUploadRef}
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) handleReferenceUpload(file)
         }}
       />
 
@@ -231,7 +279,7 @@ export default function Toolbar() {
         className="btn-primary text-xs !py-1.5"
         onClick={handleRunValidation}
         disabled={!pdfMeta}
-        title="Run AI validation simulation"
+        title={referencePdfMeta ? 'Run claim verification against reference' : 'Requires a reference PDF'}
       >
         🤖 Run Validation
       </button>

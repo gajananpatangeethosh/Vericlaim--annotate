@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { v4 as uuid } from 'uuid'
 import type { Annotation, Tool, Severity, ValidationCategory, PdfMeta, ChatSession } from '../types'
-import { extractTextFromPDF, analyzeWithOpenRouter, resultsToAnnotations } from '../utils/ai'
+import { extractTextFromPDF, verifyClaimsWithReference, claimResultsToAnnotations, extractTextItemsFromPDF } from '../utils/ai'
+import { API_KEY } from '../key'
 
 interface PendingValidation {
   message: string
@@ -21,6 +22,7 @@ interface DrawingState {
 interface AppState {
   /* --- PDF --- */
   pdfMeta: PdfMeta | null
+  referencePdfMeta: PdfMeta | null
   numPages: number
   pageWidth: number
   pageHeight: number
@@ -49,6 +51,7 @@ interface AppState {
 
   /* --- Actions PDF --- */
   setPdfMeta: (meta: PdfMeta | null) => void
+  setReferencePdfMeta: (meta: PdfMeta | null) => void
   setNumPages: (n: number) => void
   setPageDimensions: (w: number, h: number) => void
   setLoading: (l: boolean) => void
@@ -88,11 +91,13 @@ interface AppState {
   aiLoading: boolean
   aiProgress: { current: number; total: number }
   aiResult: Annotation[] | null
+  aiError: string | null
   apiKey: string
   setAiDialogOpen: (v: boolean) => void
   setAiLoading: (v: boolean) => void
   setAiProgress: (p: { current: number; total: number }) => void
   setAiResult: (r: Annotation[] | null) => void
+  setAiError: (e: string | null) => void
   setApiKey: (k: string) => void
   runAiValidation: () => Promise<void>
   applyAiResults: () => void
@@ -123,6 +128,7 @@ export const useStore = create<AppState>()(
     (set, get) => ({
       /* --- PDF --- */
       pdfMeta: null,
+      referencePdfMeta: null,
       numPages: 0,
       pageWidth: 794,
       pageHeight: 1123,
@@ -158,7 +164,8 @@ export const useStore = create<AppState>()(
       aiLoading: false,
       aiProgress: { current: 0, total: 0 },
       aiResult: null,
-      apiKey: import.meta.env.VITE_OPENROUTER_API_KEY || '',
+      aiError: null,
+      apiKey: API_KEY,
 
       /* --- Chat --- */
       chatOpen: false,
@@ -171,6 +178,7 @@ export const useStore = create<AppState>()(
 
       /* --- PDF Actions --- */
       setPdfMeta: (meta) => set({ pdfMeta: meta, error: null }),
+      setReferencePdfMeta: (meta) => set({ referencePdfMeta: meta, error: null }),
       setNumPages: (n) => set({ numPages: n }),
       setPageDimensions: (w, h) => set({ pageWidth: w, pageHeight: h }),
       setLoading: (l) => set({ loading: l }),
@@ -281,46 +289,87 @@ export const useStore = create<AppState>()(
       setAiLoading: (v) => set({ aiLoading: v }),
       setAiProgress: (p) => set({ aiProgress: p }),
       setAiResult: (r) => set({ aiResult: r }),
+      setAiError: (e) => set({ aiError: e }),
       setApiKey: (k) => set({ apiKey: k }),
 
       runAiValidation: async () => {
         const state = get()
         const meta = state.pdfMeta
+        const refMeta = state.referencePdfMeta
         if (!meta) return
+
+        // Claim verification requires both PDFs
+        if (!refMeta) {
+          set({
+            aiDialogOpen: true,
+            aiLoading: false,
+            aiResult: [],
+            aiError: 'Upload a reference/research paper PDF first to run claim verification',
+            aiProgress: { current: 0, total: 0 },
+          })
+          return
+        }
+
+        const currentKey = get().apiKey
+        if (!currentKey?.trim()) {
+          set({
+            aiDialogOpen: true,
+            aiLoading: false,
+            aiResult: [],
+            aiError: 'Enter your OpenRouter API key to run claim verification',
+            aiProgress: { current: 0, total: 0 },
+          })
+          return
+        }
 
         set({
           aiLoading: true,
           aiDialogOpen: true,
           aiResult: null,
+          aiError: null,
           aiProgress: { current: 0, total: 0 },
         })
 
         try {
-          // Get PDF data URL from IndexedDB
-          const { loadPdfBinary } = await import('../utils/idb')
-          const pdfData = await loadPdfBinary()
-          if (!pdfData) {
-            set({ aiLoading: false, aiDialogOpen: false })
+          const { loadPdfBinary, PDF_KEYS } = await import('../utils/idb')
+          const [brochureData, referenceData] = await Promise.all([
+            loadPdfBinary(PDF_KEYS.brochure),
+            loadPdfBinary(PDF_KEYS.reference),
+          ])
+
+          if (!brochureData || !referenceData) {
+            set({
+              aiLoading: false,
+              aiResult: [],
+              aiDialogOpen: false,
+            })
             return
           }
 
-          // Extract text from all pages
-          const pages = await extractTextFromPDF(pdfData)
+          // Extract text from both PDFs
+          const [brochurePages, referencePages, brochureItems] = await Promise.all([
+            extractTextFromPDF(brochureData),
+            extractTextFromPDF(referenceData),
+            extractTextItemsFromPDF(brochureData),
+          ])
 
-          set({ aiProgress: { current: 0, total: pages.length } })
+          set({ aiProgress: { current: 0, total: brochurePages.length } })
 
-          // Analyze with OpenRouter
-          const results = await analyzeWithOpenRouter(
-            pages,
-            get().apiKey,
+          // Verify claims in brochure against reference
+          const apiKeyToUse = get().apiKey || API_KEY
+          console.log('[VeriClaim] apiKey length:', apiKeyToUse?.length, '| empty:', !apiKeyToUse)
+          const results = await verifyClaimsWithReference(
+            brochurePages,
+            referencePages,
+            apiKeyToUse,
             (current, total) => {
               set({ aiProgress: { current, total } })
             }
           )
 
-          // Convert to annotations
+          // Convert to annotations with exact text positions
           const { pageWidth, pageHeight } = get()
-          const annotations = resultsToAnnotations(results, pageWidth, pageHeight)
+          const annotations = claimResultsToAnnotations(results, pageWidth, pageHeight, brochureItems)
 
           set({
             aiResult: annotations,
@@ -328,10 +377,11 @@ export const useStore = create<AppState>()(
             aiProgress: { current: 0, total: 0 },
           })
         } catch (err) {
-          console.error('AI validation failed:', err)
+          const msg = err instanceof Error ? err.message : 'Verification failed'
           set({
             aiLoading: false,
             aiResult: [],
+            aiError: msg,
             aiProgress: { current: 0, total: 0 },
           })
         }
@@ -357,7 +407,7 @@ export const useStore = create<AppState>()(
       },
 
       discardAiResults: () => {
-        set({ aiResult: null, aiDialogOpen: false })
+        set({ aiResult: null, aiError: null, aiDialogOpen: false })
       },
 
       /* --- Chat Actions --- */
@@ -463,13 +513,13 @@ export const useStore = create<AppState>()(
             {
               method: 'POST',
               headers: {
-                Authorization: `Bearer ${state.apiKey}`,
+                Authorization: `Bearer ${state.apiKey || API_KEY}`,
                 'Content-Type': 'application/json',
                 'HTTP-Referer': window.location.origin,
-                'X-Title': 'PDF Annotation Studio - Verify Claim',
+                'X-Title': 'VeriClaim',
               },
               body: JSON.stringify({
-                model: 'openai/gpt-4o-mini',
+                model: 'openrouter/free',
                 messages: [
                   {
                     role: 'system',
@@ -504,8 +554,8 @@ export const useStore = create<AppState>()(
               ...s.chatMessages,
               { role: 'assistant', content: 'Sorry, I encountered an error. Please check your API key and try again.' },
             ],
-          chatLoading: false,
-        }))
+            chatLoading: false,
+          }))
         }
       },
 
@@ -521,9 +571,14 @@ export const useStore = create<AppState>()(
       },
 
       /* --- General --- */
-      clearAll: () =>
+      clearAll: () => {
+        // Clean up reference PDF from IndexedDB
+        import('../utils/idb').then(({ deletePdfBinary, PDF_KEYS }) => {
+          deletePdfBinary(PDF_KEYS.reference)
+        })
         set({
           pdfMeta: null,
+          referencePdfMeta: null,
           numPages: 0,
           pageWidth: 794,
           pageHeight: 1123,
@@ -541,6 +596,7 @@ export const useStore = create<AppState>()(
           drawing: null,
           error: null,
           aiResult: null,
+          aiError: null,
           aiDialogOpen: false,
           aiLoading: false,
           aiProgress: { current: 0, total: 0 },
@@ -551,12 +607,14 @@ export const useStore = create<AppState>()(
           chatLoading: false,
           chatSessionId: null,
           chatSessions: [],
-        }),
+        })
+        },
     }),
     {
       name: 'pdf-annotator-store',
       partialize: (state) => ({
         pdfMeta: state.pdfMeta,
+        referencePdfMeta: state.referencePdfMeta,
         numPages: state.numPages,
         pageWidth: state.pageWidth,
         pageHeight: state.pageHeight,
@@ -567,7 +625,16 @@ export const useStore = create<AppState>()(
         currentTool: state.currentTool,
         searchQuery: state.searchQuery,
         chatSessions: state.chatSessions,
+        apiKey: state.apiKey,
       }),
+      merge: (persisted, current) => {
+        const merged = { ...current, ...(persisted as Partial<AppState>) }
+        // Don't let a stale/invalid persisted key override the key from src/key.ts
+        if (!merged.apiKey || merged.apiKey.length < 20) {
+          merged.apiKey = (current as AppState).apiKey
+        }
+        return merged
+      },
     }
   )
 )

@@ -49,6 +49,17 @@ export interface PdfMeta {
   totalSize: number
 }
 
+export type Verdict = 'verified' | 'partial' | 'unsupported'
+
+export interface ClaimResult {
+  page: number
+  text: string
+  claim: string
+  verdict: Verdict
+  evidence: string
+  message: string
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string

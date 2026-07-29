@@ -1,4 +1,4 @@
-import type { Severity, ValidationCategory } from '../types'
+import type { Severity, ValidationCategory, Verdict } from '../types'
 
 export const TOOL_NAMES: Record<string, string> = {
   pointer: 'Pointer (V)',
@@ -79,6 +79,24 @@ export const CATEGORY_ICONS: Record<ValidationCategory, string> = {
   'personal-info': '🔒',
   medical: '🏥',
   custom: '🔧',
+}
+
+export const VERDICT_COLORS: Record<Verdict, string> = {
+  verified: '#22c55e',
+  partial: '#eab308',
+  unsupported: '#ef4444',
+}
+
+export const VERDICT_LABELS: Record<Verdict, string> = {
+  verified: 'Verified',
+  partial: 'Partial',
+  unsupported: 'Unsupported',
+}
+
+export const VERDICT_ICONS: Record<Verdict, string> = {
+  verified: '✅',
+  partial: '⚠️',
+  unsupported: '❌',
 }
 
 export const DEFAULT_ZOOM = 1.0

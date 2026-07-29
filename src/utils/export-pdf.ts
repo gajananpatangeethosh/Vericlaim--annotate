@@ -1,7 +1,7 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import type { Annotation } from '../types'
 import { loadPdfBinary } from './idb'
-import { SEVERITY_BORDERS } from './constants'
+import { SEVERITY_BORDERS, VERDICT_COLORS, VERDICT_LABELS } from './constants'
 
 function hexToRgb(hex: string) {
   const clean = hex.replace('#', '')
@@ -88,10 +88,12 @@ export async function exportAnnotatedPDF(
         })
       }
     } else if (ann.type === 'validation') {
+      // Check if this is a claim verification annotation (color matches verdict colors)
+      const isClaimVerification = ann.color && Object.values(VERDICT_COLORS).includes(ann.color)
       const borderHex = ann.severity
         ? SEVERITY_BORDERS[ann.severity]
         : '#60a5fa'
-      const c = hexToRgb(borderHex)
+      const c = hexToRgb(isClaimVerification ? ann.color : borderHex)
 
       // Colored border
       page.drawRectangle({
@@ -107,39 +109,82 @@ export async function exportAnnotatedPDF(
         opacity: 0.1,
       })
 
-      // Severity indicator square (top-right corner)
-      const badgeSize = 16
-      page.drawRectangle({
-        x: x + w - badgeSize,
-        y: y + h - badgeSize,
-        width: badgeSize,
-        height: badgeSize,
-        color: c,
-      })
-
-      // Severity symbol inside badge
-      const symbol = ann.severity === 'error' ? '✕'
-        : ann.severity === 'warning' ? '!'
-        : ann.severity === 'success' ? '✓'
-        : 'i'
-      const symSize = 9
-      page.drawText(symbol, {
-        x: x + w - badgeSize / 2 - symSize / 3,
-        y: y + h - badgeSize / 2 - symSize / 3,
-        size: symSize,
-        font: fontBold,
-        color: white,
-      })
-
-      // Category label below annotation
-      if (ann.category && ann.category !== 'custom') {
-        page.drawText(truncate(ann.category.replace('-', ' '), 14), {
-          x: x + 2,
-          y: y - 11,
-          size: 7,
-          font,
+      if (isClaimVerification) {
+        // Verdict indicator square (top-right)
+        const badgeSize = 16
+        page.drawRectangle({
+          x: x + w - badgeSize,
+          y: y + h - badgeSize,
+          width: badgeSize,
+          height: badgeSize,
           color: c,
         })
+
+        // Verdict symbol
+        let symbol = '?'
+        if (ann.color === VERDICT_COLORS.verified) symbol = '✓'
+        else if (ann.color === VERDICT_COLORS.partial) symbol = '~'
+        else if (ann.color === VERDICT_COLORS.unsupported) symbol = '✕'
+        const symSize = 9
+        page.drawText(symbol, {
+          x: x + w - badgeSize / 2 - symSize / 3,
+          y: y + h - badgeSize / 2 - symSize / 3,
+          size: symSize,
+          font: fontBold,
+          color: white,
+        })
+
+        // Extract evidence from comment field
+        const comment = ann.comment || ''
+        const evidenceMatch = comment.match(/Evidence:\n([\s\S]*)$/)
+        const evidence = evidenceMatch ? evidenceMatch[1].trim() : ''
+
+        // Render evidence as a tooltip-style label below annotation
+        if (evidence) {
+          const evidLabel = truncate(evidence, 60)
+          page.drawText(evidLabel, {
+            x: x + 2,
+            y: y - 11,
+            size: 6,
+            font,
+            color: c,
+          })
+        }
+      } else {
+        // Legacy validation: severity indicator square (top-right corner)
+        const badgeSize = 16
+        page.drawRectangle({
+          x: x + w - badgeSize,
+          y: y + h - badgeSize,
+          width: badgeSize,
+          height: badgeSize,
+          color: c,
+        })
+
+        // Severity symbol inside badge
+        const symbol = ann.severity === 'error' ? '✕'
+          : ann.severity === 'warning' ? '!'
+          : ann.severity === 'success' ? '✓'
+          : 'i'
+        const symSize = 9
+        page.drawText(symbol, {
+          x: x + w - badgeSize / 2 - symSize / 3,
+          y: y + h - badgeSize / 2 - symSize / 3,
+          size: symSize,
+          font: fontBold,
+          color: white,
+        })
+
+        // Category label below annotation
+        if (ann.category && ann.category !== 'custom') {
+          page.drawText(truncate(ann.category.replace('-', ' '), 14), {
+            x: x + 2,
+            y: y - 11,
+            size: 7,
+            font,
+            color: c,
+          })
+        }
       }
     }
 

@@ -1,6 +1,10 @@
 const DB_NAME = 'pdf-annotator-db'
 const STORE_NAME = 'pdf-store'
-const KEY = 'current-pdf'
+
+export const PDF_KEYS = {
+  brochure: 'brochure-pdf',
+  reference: 'reference-pdf',
+} as const
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -13,31 +17,31 @@ function openDB(): Promise<IDBDatabase> {
   })
 }
 
-export async function savePdfBinary(data: string): Promise<void> {
+export async function savePdfBinary(data: string, key: string = PDF_KEYS.brochure): Promise<void> {
   const db = await openDB()
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite')
-    tx.objectStore(STORE_NAME).put(data, KEY)
+    tx.objectStore(STORE_NAME).put(data, key)
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
   })
 }
 
-export async function loadPdfBinary(): Promise<string | null> {
+export async function loadPdfBinary(key: string = PDF_KEYS.brochure): Promise<string | null> {
   const db = await openDB()
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readonly')
-    const req = tx.objectStore(STORE_NAME).get(KEY)
+    const req = tx.objectStore(STORE_NAME).get(key)
     req.onsuccess = () => resolve(req.result ?? null)
     req.onerror = () => reject(req.error)
   })
 }
 
-export async function deletePdfBinary(): Promise<void> {
+export async function deletePdfBinary(key: string = PDF_KEYS.brochure): Promise<void> {
   const db = await openDB()
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite')
-    tx.objectStore(STORE_NAME).delete(KEY)
+    tx.objectStore(STORE_NAME).delete(key)
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
   })
