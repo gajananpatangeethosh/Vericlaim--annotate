@@ -634,9 +634,10 @@ export const useStore = create<AppState>()(
       }),
       merge: (persisted, current) => {
         const merged = { ...current, ...(persisted as Partial<AppState>) }
-        // Don't let a stale/invalid persisted key override the key from src/key.ts
-        if (!merged.apiKey || merged.apiKey.length < 20) {
-          merged.apiKey = (current as AppState).apiKey
+        const currentKey = (current as AppState).apiKey
+        // Always use the code-level key if it differs from persisted (ensures key rotation)
+        if (!merged.apiKey || merged.apiKey.length < 20 || merged.apiKey !== currentKey) {
+          merged.apiKey = currentKey
         }
         return merged
       },

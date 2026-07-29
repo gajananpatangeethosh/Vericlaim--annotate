@@ -146,64 +146,129 @@ export function findClaimBoundsPerLine(
 ): Bounds[] | null {
   if (items.length === 0 || !claimText.trim()) return null
 
-  const claimWords = claimText.split(/\s+/).map(normalizeWord).filter(Boolean)
-  if (claimWords.length === 0) return null
-
-  // Build word→items index: each pdf.js item becomes one or more words
-  const itemWords: Array<{ word: string; itemIdx: number }> = []
+  // Build full text with character-offset tracking per item
+  let fullText = ''
+  const offsets: Array<{ itemIdx: number; charStart: number; charEnd: number }> = []
+  let cursor = 0
   for (let i = 0; i < items.length; i++) {
-    const words = items[i].str.split(/\s+/).filter(Boolean)
-    for (const w of words) {
-      itemWords.push({ word: normalizeWord(w), itemIdx: i })
+    const s = items[i].str
+    offsets.push({ itemIdx: i, charStart: cursor, charEnd: cursor + s.length })
+    fullText += s
+    cursor += s.length
+  }
+
+  const searchText = claimText.replace(/\s+/g, ' ').trim()
+  const normalizedFull = fullText.replace(/\s+/g, ' ')
+
+  // Try multiple matching strategies on the full text
+  let matchStart = -1
+  let matchEnd = -1
+
+  // Strategy 1: exact substring
+  let idx = fullText.indexOf(searchText)
+  if (idx >= 0) {
+    matchStart = idx
+    matchEnd = idx + searchText.length
+  }
+
+  // Strategy 2: normalized (collapse whitespace)
+  if (matchStart < 0) {
+    idx = normalizedFull.indexOf(searchText)
+    if (idx >= 0) {
+      // Map normalized offset back to original fullText offset
+      let origPos = 0
+      let normPos = 0
+      while (normPos < idx && origPos < fullText.length) {
+        if (fullText[origPos] === ' ' || fullText[origPos] === '\n' || fullText[origPos] === '\t') {
+          // Skip consecutive whitespace in normalized text
+          while (origPos < fullText.length && (fullText[origPos] === ' ' || fullText[origPos] === '\n' || fullText[origPos] === '\t')) origPos++
+          normPos++ // single space in normalized
+        } else {
+          origPos++
+          normPos++
+        }
+      }
+      matchStart = origPos
+      matchEnd = origPos + searchText.length
     }
   }
 
-  if (itemWords.length === 0) return null
+  // Strategy 3: first 50 chars of claim
+  if (matchStart < 0 && searchText.length > 30) {
+    const prefix = searchText.substring(0, 50).trim()
+    idx = fullText.indexOf(prefix)
+    if (idx >= 0) {
+      matchStart = idx
+      matchEnd = idx + prefix.length
+    }
+  }
 
-  // Sliding window: find the window of consecutive item-words that best matches the claim words
-  let bestScore = 0
-  let bestStart = 0
-  let bestLen = 0
+  // Strategy 4: first 30 chars
+  if (matchStart < 0 && searchText.length > 20) {
+    const prefix = searchText.substring(0, 30).trim()
+    idx = fullText.indexOf(prefix)
+    if (idx >= 0) {
+      matchStart = idx
+      matchEnd = idx + prefix.length
+    }
+  }
 
-  // Try windows of varying sizes around the claim word count
-  for (let winSize = Math.max(1, claimWords.length - 3); winSize <= claimWords.length + 5; winSize++) {
-    for (let start = 0; start <= itemWords.length - winSize; start++) {
-      let score = 0
-      const end = Math.min(start + winSize, itemWords.length)
-      const actualWinSize = end - start
-
-      // Score: how many claim words appear in this window (in order)
-      let ci = 0
-      for (let ii = start; ii < end && ci < claimWords.length; ii++) {
-        if (itemWords[ii].word === claimWords[ci]) {
-          score++
-          ci++
+  // Strategy 5: word-by-word subsequence in order (scan full text)
+  if (matchStart < 0) {
+    const claimWords = searchText.split(/\s+/).map(normalizeWord).filter(Boolean)
+    if (claimWords.length >= 2) {
+      // Build normalized word list with positions
+      const normWords: Array<{ word: string; pos: number }> = []
+      let p = 0
+      for (let i = 0; i < offsets.length; i++) {
+        const s = items[offsets[i].itemIdx].str
+        const words = s.split(/\s+/).filter(Boolean)
+        for (const w of words) {
+          normWords.push({ word: normalizeWord(w), pos: p })
+          p += w.length + 1
         }
       }
 
-      // Normalize by claim word count
-      const normalizedScore = score / claimWords.length
-      // Prefer windows close to the claim word count
-      const sizePenalty = Math.abs(actualWinSize - claimWords.length) / claimWords.length
-      const adjustedScore = normalizedScore - sizePenalty * 0.3
+      // Find best subsequence match
+      let bestSeqScore = 0
+      let bestSeqStart = -1
+      let bestSeqEnd = -1
 
-      if (adjustedScore > bestScore) {
-        bestScore = adjustedScore
-        bestStart = start
-        bestLen = actualWinSize
+      for (let start = 0; start <= normWords.length - Math.min(claimWords.length, 3); start++) {
+        let ci = 0
+        let lastPos = normWords[start].pos
+        let firstPos = normWords[start].pos
+        for (let wi = start; wi < normWords.length && ci < claimWords.length; wi++) {
+          if (normWords[wi].word === claimWords[ci]) {
+            if (ci === 0) firstPos = normWords[wi].pos
+            lastPos = normWords[wi].pos + normWords[wi].word.length
+            ci++
+          }
+        }
+        const score = ci / claimWords.length
+        if (score > bestSeqScore) {
+          bestSeqScore = score
+          bestSeqStart = firstPos
+          bestSeqEnd = lastPos
+        }
+      }
+
+      if (bestSeqScore >= 0.5) {
+        matchStart = bestSeqStart
+        matchEnd = bestSeqEnd
       }
     }
   }
 
-  if (bestScore < 0.3) return null
+  if (matchStart < 0 || matchEnd < 0) return null
 
-  // Collect the unique pdf.js items covered by the best window
-  const matchedItemIndices = new Set<number>()
-  for (let i = bestStart; i < bestStart + bestLen && i < itemWords.length; i++) {
-    matchedItemIndices.add(itemWords[i].itemIdx)
+  // Find all items that overlap with the match range
+  const matchedItems: TextItemWithPos[] = []
+  for (const off of offsets) {
+    if (off.charEnd > matchStart && off.charStart < matchEnd) {
+      matchedItems.push(items[off.itemIdx])
+    }
   }
-
-  const matchedItems = Array.from(matchedItemIndices).sort((a, b) => a - b).map((idx) => items[idx])
 
   if (matchedItems.length === 0) return null
 
