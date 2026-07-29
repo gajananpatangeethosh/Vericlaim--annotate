@@ -337,7 +337,7 @@ export default function AnnotationLayer({
             )}
 
             {/* ── Highlight claim tooltip ── */}
-            {isHighlight && hov && (
+            {isHighlight && (
               <div className="hidden group-hover:block">
                 <ClaimTooltip annotation={ann} />
               </div>
