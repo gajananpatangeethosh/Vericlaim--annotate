@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware'
 import { v4 as uuid } from 'uuid'
 import type { Annotation, Tool, Severity, ValidationCategory, PdfMeta, ChatSession } from '../types'
 import { extractTextFromPDF, verifyClaimsWithReference, claimResultsToAnnotations, extractTextItemsFromPDF } from '../utils/ai'
+import type { PageWithItems } from '../utils/ai'
 import { API_KEY } from '../key'
 
 interface PendingValidation {
@@ -93,6 +94,7 @@ interface AppState {
   aiResult: Annotation[] | null
   aiError: string | null
   apiKey: string
+  brochureItems: PageWithItems[] | null
   setAiDialogOpen: (v: boolean) => void
   setAiLoading: (v: boolean) => void
   setAiProgress: (p: { current: number; total: number }) => void
@@ -166,6 +168,7 @@ export const useStore = create<AppState>()(
       aiResult: null,
       aiError: null,
       apiKey: API_KEY,
+      brochureItems: null,
 
       /* --- Chat --- */
       chatOpen: false,
@@ -368,11 +371,12 @@ export const useStore = create<AppState>()(
           )
 
           // Convert to annotations with exact text positions
-          const { pageWidth, pageHeight } = get()
-          const annotations = claimResultsToAnnotations(results, pageWidth, pageHeight, brochureItems)
+          const { pageWidth, pageHeight, zoom } = get()
+          const annotations = claimResultsToAnnotations(results, pageWidth, pageHeight, zoom, brochureItems)
 
           set({
             aiResult: annotations,
+            brochureItems,
             aiLoading: false,
             aiProgress: { current: 0, total: 0 },
           })
@@ -600,6 +604,7 @@ export const useStore = create<AppState>()(
           aiDialogOpen: false,
           aiLoading: false,
           aiProgress: { current: 0, total: 0 },
+          brochureItems: null,
           chatOpen: false,
           chatSelectedText: '',
           chatPage: null,

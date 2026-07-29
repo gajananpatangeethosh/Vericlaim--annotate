@@ -1,6 +1,11 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import type { Annotation, Bounds, Severity } from '../../types'
 import { SEVERITY_BORDERS, SEVERITY_ICONS, CATEGORY_ICONS, CATEGORY_LABELS } from '../../utils/constants'
+import { findClaimBoundsFromSpans, computeUnionBounds } from '../../utils/text-positions'
+import { findClaimBoundsPerLine } from '../../utils/ai'
+import { normaliseBounds } from '../../utils/pdf'
+import type { TextSpan } from '../../utils/text-positions'
+import type { PageWithItems } from '../../utils/ai'
 import ValidationTooltip from '../ValidationTooltip/ValidationTooltip'
 
 interface Props {
@@ -11,6 +16,9 @@ interface Props {
   selectedId: string | null
   hoveredId: string | null
   indexMap: Map<string, number>
+  textSpans: TextSpan[]
+  pageNumber: number
+  pdfItems: PageWithItems | null
   onSelect: (id: string) => void
   onDelete: (id: string) => void
   onUpdate: (id: string, partial: Partial<Annotation>) => void
@@ -38,6 +46,9 @@ export default function AnnotationLayer({
   selectedId,
   hoveredId,
   indexMap,
+  textSpans,
+  pageNumber,
+  pdfItems,
   onSelect,
   onDelete,
   onUpdate,
@@ -52,6 +63,39 @@ export default function AnnotationLayer({
 
   const layerRef = useRef<HTMLDivElement>(null)
   const hoveredRef = useRef<string | null>(null)
+
+  const [effectiveAnnotations, setEffectiveAnnotations] = useState<Annotation[]>(annotations)
+
+  useEffect(() => {
+    const layerEl = layerRef.current
+    const wrapperRect = layerEl?.parentElement?.getBoundingClientRect()
+
+    const next = annotations.map((ann) => {
+      if (!ann.text || ann.type !== 'highlight') return ann
+
+      // Strategy 1: DOM text spans (most accurate when available)
+      if (textSpans.length > 0 && wrapperRect) {
+        const domResult = findClaimBoundsFromSpans(textSpans, ann.text, wrapperRect)
+        if (domResult && domResult.length > 0) {
+          const lineBounds = domResult.map((b) => normaliseBounds(b, zoom))
+          const bounds = lineBounds.length === 1 ? lineBounds[0] : computeUnionBounds(lineBounds)
+          return { ...ann, bounds, lineBounds }
+        }
+      }
+
+      // Strategy 2: pdf.js text items (fallback)
+      if (pdfItems && pdfItems.items.length > 0) {
+        const perLine = findClaimBoundsPerLine(pdfItems.items, ann.text, pdfItems.pageHeight)
+        if (perLine && perLine.length > 0) {
+          const bounds = perLine.length === 1 ? perLine[0] : computeUnionBounds(perLine)
+          return { ...ann, bounds, lineBounds: perLine }
+        }
+      }
+
+      return ann
+    })
+    setEffectiveAnnotations(next)
+  }, [annotations, textSpans, pdfItems, pageNumber, zoom])
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent, ann: Annotation) => {
@@ -133,7 +177,7 @@ export default function AnnotationLayer({
       onMouseLeave={handleMouseUp}
       style={{ pointerEvents: 'none' }}
     >
-      {annotations.map((ann) => {
+      {effectiveAnnotations.map((ann) => {
         const sx = ann.bounds.x * zoom
         const sy = ann.bounds.y * zoom
         const sw = ann.bounds.width * zoom
@@ -148,6 +192,7 @@ export default function AnnotationLayer({
         const isHighlight = ann.type === 'highlight'
         const isRect = ann.type === 'rectangle'
         const isValid = ann.type === 'validation'
+        const hasLineBounds = isHighlight && ann.lineBounds && ann.lineBounds.length > 1
 
         return (
           <div
@@ -161,7 +206,7 @@ export default function AnnotationLayer({
               top: sy,
               width: sw,
               height: sh,
-              backgroundColor: getFillColor(ann),
+              backgroundColor: hasLineBounds ? 'transparent' : getFillColor(ann),
               pointerEvents: 'auto',
               transition: isDragging
                 ? 'none'
@@ -181,6 +226,20 @@ export default function AnnotationLayer({
             onMouseEnter={() => handleMouseEnter(ann.id)}
             onMouseLeave={handleMouseLeave}
           >
+            {/* ── Per-line highlight rects ── */}
+            {hasLineBounds && ann.lineBounds!.map((lb, i) => (
+              <div
+                key={`line-${i}`}
+                className="absolute rounded"
+                style={{
+                  left: lb.x * zoom - sx,
+                  top: lb.y * zoom - sy,
+                  width: lb.width * zoom,
+                  height: lb.height * zoom,
+                  backgroundColor: ann.color + '66',
+                }}
+              />
+            ))}
             {/* ── Highlight: left accent bar ── */}
             {isHighlight && (
               <div

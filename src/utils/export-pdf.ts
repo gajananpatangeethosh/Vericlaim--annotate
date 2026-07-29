@@ -58,11 +58,21 @@ export async function exportAnnotatedPDF(
 
     if (ann.type === 'highlight') {
       const c = hexToRgb(ann.color || '#fef08a')
-      page.drawRectangle({
-        x, y, width: w, height: h,
-        color: c,
-        opacity: 0.4,
-      })
+      if (ann.lineBounds && ann.lineBounds.length > 1) {
+        for (const lb of ann.lineBounds) {
+          page.drawRectangle({
+            x: lb.x, y: toPdfY(pageH, lb.y, lb.height),
+            width: lb.width, height: lb.height,
+            color: c, opacity: 0.4,
+          })
+        }
+      } else {
+        page.drawRectangle({
+          x, y, width: w, height: h,
+          color: c,
+          opacity: 0.4,
+        })
+      }
     } else if (ann.type === 'rectangle') {
       const c = hexToRgb(ann.color || '#93c5fd')
       page.drawRectangle({

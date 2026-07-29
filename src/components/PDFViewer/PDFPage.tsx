@@ -4,7 +4,9 @@ import { useStore } from '../../store/useStore'
 import { v4 as uuid } from 'uuid'
 import AnnotationLayer from './AnnotationLayer'
 import { normaliseBounds } from '../../utils/pdf'
+import { getPageTextSpans } from '../../utils/text-positions'
 import type { Bounds } from '../../types'
+import type { TextSpan } from '../../utils/text-positions'
 
 interface Props {
   pageNumber: number
@@ -37,8 +39,11 @@ export default function PDFPage({ pageNumber }: Props) {
   const [pageW, setPageW] = useState(0)
   const [pageH, setPageH] = useState(0)
   const [drawing, setDrawing] = useState<DrawingState | null>(null)
+  const brochureItems = useStore((s) => s.brochureItems)
+  const [textSpans, setTextSpans] = useState<TextSpan[]>([])
 
   const pageAnnotations = annotations.filter((a) => a.page === pageNumber)
+  const pdfItemsForPage = brochureItems?.find((p) => p.page === pageNumber) ?? null
 
   // Global annotation index map for numbered badges
   const sortedAll = useMemo(
@@ -56,6 +61,27 @@ export default function PDFPage({ pageNumber }: Props) {
     setPageH(page.height)
     setPageLoaded(true)
   }, [])
+
+  // Query text layer spans with retry (text layer may take time to render)
+  useEffect(() => {
+    if (!pageLoaded || !wrapperRef.current) return
+    let attempts = 0
+    const maxAttempts = 5
+    const tryQuery = () => {
+      if (!wrapperRef.current) return
+      const spans = getPageTextSpans(wrapperRef.current)
+      if (spans.length > 0) {
+        setTextSpans(spans)
+        return
+      }
+      attempts++
+      if (attempts < maxAttempts) {
+        setTimeout(tryQuery, 150)
+      }
+    }
+    const timer = setTimeout(tryQuery, 100)
+    return () => clearTimeout(timer)
+  }, [pageLoaded, zoom])
 
   /* ─── Text selection (highlight mode) ─── */
   useEffect(() => {
@@ -258,6 +284,9 @@ export default function PDFPage({ pageNumber }: Props) {
             selectedId={selectedAnnotationId}
             hoveredId={hoveredAnnotationId}
             indexMap={indexMap}
+            textSpans={textSpans}
+            pageNumber={pageNumber}
+            pdfItems={pdfItemsForPage}
             onSelect={(id) => setSelectedAnnotationId(id)}
             onDelete={(id) => deleteAnnotation(id)}
             onUpdate={(id, partial) => updateAnnotation(id, partial)}

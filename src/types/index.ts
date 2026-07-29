@@ -34,6 +34,7 @@ export interface Annotation {
   text?: string
   message?: string
   bounds: Bounds
+  lineBounds?: Bounds[]
   color: string
   severity?: Severity
   category?: ValidationCategory

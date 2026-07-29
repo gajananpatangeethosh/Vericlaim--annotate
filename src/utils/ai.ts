@@ -3,6 +3,9 @@ import { v4 as uuid } from 'uuid'
 import type { Annotation, Severity, Verdict, ClaimResult, Bounds } from '../types'
 import { SEVERITY_COLORS, VERDICT_COLORS } from './constants'
 import { API_KEY } from '../key'
+import type { TextSpan } from './text-positions'
+import { findClaimBoundsFromSpans, computeUnionBounds } from './text-positions'
+import { normaliseBounds } from './pdf'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -127,28 +130,111 @@ function findClaimBounds(
   claimText: string,
   pageHeight: number
 ): Bounds | null {
-  let fullText = ''
+  const result = findClaimBoundsPerLine(items, claimText, pageHeight)
+  if (!result || result.length === 0) return null
+  return result.length === 1 ? result[0] : computeUnionBounds(result)
+}
+
+function normalizeWord(w: string): string {
+  return w.toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+export function findClaimBoundsPerLine(
+  items: TextItemWithPos[],
+  claimText: string,
+  pageHeight: number
+): Bounds[] | null {
+  if (items.length === 0 || !claimText.trim()) return null
+
+  const claimWords = claimText.split(/\s+/).map(normalizeWord).filter(Boolean)
+  if (claimWords.length === 0) return null
+
+  // Build word→items index: each pdf.js item becomes one or more words
+  const itemWords: Array<{ word: string; itemIdx: number }> = []
   for (let i = 0; i < items.length; i++) {
-    fullText += items[i].str
-    if (i < items.length - 1) fullText += ' '
+    const words = items[i].str.split(/\s+/).filter(Boolean)
+    for (const w of words) {
+      itemWords.push({ word: normalizeWord(w), itemIdx: i })
+    }
   }
 
-  const searchText = claimText.replace(/\s+/g, ' ').trim()
-  const idx = fullText.indexOf(searchText)
-  if (idx < 0) return null
+  if (itemWords.length === 0) return null
 
-  const endIdx = idx + searchText.length
-  let cursor = 0
-  let minX = Infinity, maxX = -Infinity
-  let minY = Infinity, maxY = -Infinity
-  let found = false
+  // Sliding window: find the window of consecutive item-words that best matches the claim words
+  let bestScore = 0
+  let bestStart = 0
+  let bestLen = 0
 
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]
-    const segEnd = cursor + item.str.length
+  // Try windows of varying sizes around the claim word count
+  for (let winSize = Math.max(1, claimWords.length - 3); winSize <= claimWords.length + 5; winSize++) {
+    for (let start = 0; start <= itemWords.length - winSize; start++) {
+      let score = 0
+      const end = Math.min(start + winSize, itemWords.length)
+      const actualWinSize = end - start
 
-    if (segEnd > idx && cursor < endIdx) {
-      found = true
+      // Score: how many claim words appear in this window (in order)
+      let ci = 0
+      for (let ii = start; ii < end && ci < claimWords.length; ii++) {
+        if (itemWords[ii].word === claimWords[ci]) {
+          score++
+          ci++
+        }
+      }
+
+      // Normalize by claim word count
+      const normalizedScore = score / claimWords.length
+      // Prefer windows close to the claim word count
+      const sizePenalty = Math.abs(actualWinSize - claimWords.length) / claimWords.length
+      const adjustedScore = normalizedScore - sizePenalty * 0.3
+
+      if (adjustedScore > bestScore) {
+        bestScore = adjustedScore
+        bestStart = start
+        bestLen = actualWinSize
+      }
+    }
+  }
+
+  if (bestScore < 0.3) return null
+
+  // Collect the unique pdf.js items covered by the best window
+  const matchedItemIndices = new Set<number>()
+  for (let i = bestStart; i < bestStart + bestLen && i < itemWords.length; i++) {
+    matchedItemIndices.add(itemWords[i].itemIdx)
+  }
+
+  const matchedItems = Array.from(matchedItemIndices).sort((a, b) => a - b).map((idx) => items[idx])
+
+  if (matchedItems.length === 0) return null
+
+  // Group items into lines based on vertical position
+  const lines: TextItemWithPos[][] = []
+  let currentLine: TextItemWithPos[] = [matchedItems[0]]
+
+  for (let i = 1; i < matchedItems.length; i++) {
+    const prev = matchedItems[i - 1]
+    const curr = matchedItems[i]
+    const prevCssTop = pageHeight - prev.y - prev.height
+    const currCssTop = pageHeight - curr.y - curr.height
+    const verticalGap = Math.abs(currCssTop - (prevCssTop + prev.height))
+    const sameLine = verticalGap < prev.height * 0.8
+
+    if (sameLine) {
+      currentLine.push(matchedItems[i])
+    } else {
+      lines.push(currentLine)
+      currentLine = [matchedItems[i]]
+    }
+  }
+  lines.push(currentLine)
+
+  // Compute bounds for each line
+  const result: Bounds[] = []
+  for (const line of lines) {
+    let minX = Infinity, maxX = -Infinity
+    let minY = Infinity, maxY = -Infinity
+
+    for (const item of line) {
       const cssTop = pageHeight - item.y - item.height
       minX = Math.min(minX, item.x)
       maxX = Math.max(maxX, item.x + item.width)
@@ -156,17 +242,15 @@ function findClaimBounds(
       maxY = Math.max(maxY, cssTop + item.height)
     }
 
-    cursor = segEnd + 1
+    result.push({
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+    })
   }
 
-  if (!found) return null
-
-  return {
-    x: minX,
-    y: minY,
-    width: maxX - minX,
-    height: maxY - minY,
-  }
+  return result.length > 0 ? result : null
 }
 
 function estimateClaimBounds(
@@ -427,19 +511,41 @@ export function claimResultsToAnnotations(
   results: ClaimResult[],
   pageWidth: number,
   pageHeight: number,
-  pageItems?: PageWithItems[]
+  zoom: number,
+  pageItems?: PageWithItems[],
+  domPositions?: Map<number, { spans: TextSpan[]; wrapperRect: DOMRect }>
 ): Annotation[] {
   const annotations: Annotation[] = []
   const now = new Date().toISOString()
 
   for (const r of results) {
-    let bounds: Bounds
+    let bounds: Bounds | null = null
+    let lineBounds: Bounds[] | undefined
 
+    // Priority 1: pdf.js text items (most reliable — uses PDF's own coordinate system)
     const pageData = pageItems?.find((p) => p.page === r.page)
     if (pageData) {
-      const exact = findClaimBounds(pageData.items, r.claim, pageData.pageHeight)
-      bounds = exact || estimateClaimBounds(r, pageWidth, pageHeight)
-    } else {
+      const perLine = findClaimBoundsPerLine(pageData.items, r.claim, pageData.pageHeight)
+      if (perLine) {
+        lineBounds = perLine
+        bounds = perLine.length === 1 ? perLine[0] : computeUnionBounds(perLine)
+      }
+    }
+
+    // Priority 2: DOM-based positions (fallback)
+    if (!lineBounds) {
+      const domData = domPositions?.get(r.page)
+      if (domData) {
+        const domResult = findClaimBoundsFromSpans(domData.spans, r.claim, domData.wrapperRect)
+        if (domResult) {
+          lineBounds = domResult.map((b) => normaliseBounds(b, zoom))
+          bounds = lineBounds.length === 1 ? lineBounds[0] : computeUnionBounds(lineBounds)
+        }
+      }
+    }
+
+    // Fallback: estimated bounds (least accurate)
+    if (!bounds) {
       bounds = estimateClaimBounds(r, pageWidth, pageHeight)
     }
 
@@ -450,6 +556,7 @@ export function claimResultsToAnnotations(
       text: r.claim,
       message: r.message,
       bounds,
+      lineBounds,
       color: VERDICT_COLORS[r.verdict],
       severity: r.verdict === 'verified' ? 'success' : r.verdict === 'partial' ? 'warning' : 'error',
       category: 'compliance',
