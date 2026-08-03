@@ -5,29 +5,20 @@ import {
   SEVERITY_COLORS,
   ANNOTATION_COLORS,
 } from './constants'
+import { cssToScreen, screenToCss } from './coordinates'
 
 export function normaliseBounds(
   bounds: Bounds,
   scale: number
 ): Bounds {
-  return {
-    x: bounds.x / scale,
-    y: bounds.y / scale,
-    width: bounds.width / scale,
-    height: bounds.height / scale,
-  }
+  return screenToCss(bounds, scale)
 }
 
 export function denormaliseBounds(
   bounds: Bounds,
   scale: number
 ): Bounds {
-  return {
-    x: bounds.x * scale,
-    y: bounds.y * scale,
-    width: bounds.width * scale,
-    height: bounds.height * scale,
-  }
+  return cssToScreen(bounds, scale)
 }
 
 export function generateFakeValidations(

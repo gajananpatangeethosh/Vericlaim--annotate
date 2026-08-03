@@ -30,6 +30,13 @@ export const SEVERITY_ICONS: Record<Severity, string> = {
   success: '✅',
 }
 
+export const SEVERITY_LABELS: Record<Severity, string> = {
+  info: 'Info',
+  warning: 'Warning',
+  error: 'Error',
+  success: 'Success',
+}
+
 export const HIGHLIGHT_COLORS = ['#fef08a', '#86efac', '#93c5fd', '#fca5a5']
 
 export const ANNOTATION_COLORS: Record<string, string> = {

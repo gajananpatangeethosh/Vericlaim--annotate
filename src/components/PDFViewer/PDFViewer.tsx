@@ -153,7 +153,7 @@ export default function PDFViewer() {
             <div
               key={`page-${i + 1}`}
               ref={getPageRef(i + 1)}
-              className="shadow-card rounded-lg overflow-hidden bg-white"
+              className="shadow-card rounded-lg bg-white"
             >
               <PDFPage
                 pageNumber={i + 1}

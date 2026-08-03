@@ -1,5 +1,6 @@
 import { type Annotation } from '../../types'
 import { VERDICT_COLORS, VERDICT_LABELS, VERDICT_ICONS } from '../../utils/constants'
+import { useStore } from '../../store/useStore'
 
 interface Props {
   annotation: Annotation
@@ -32,13 +33,15 @@ export default function ClaimTooltip({ annotation }: Props) {
 
   return (
     <div
-      className="pointer-events-none absolute z-50 animate-fade-in select-none"
+      className="pointer-events-none select-none"
       style={{
         bottom: 'calc(100% + 8px)',
         left: '50%',
         transform: 'translateX(-50%)',
         minWidth: 220,
         maxWidth: 320,
+        position: 'absolute',
+        zIndex: 100,
       }}
     >
       {/* Main card */}
@@ -90,6 +93,26 @@ export default function ClaimTooltip({ annotation }: Props) {
                 &ldquo;{evidence.substring(0, 200)}{evidence.length > 200 ? '...' : ''}&rdquo;
               </p>
             </div>
+          )}
+
+          {/* Jump to evidence highlight in the reference paper */}
+          {annotation.referencePage && annotation.referenceLocationStatus === 'found' && (
+            <button
+              className="mt-2 w-full pointer-events-auto text-[10px] font-medium py-1 rounded-lg border transition-colors hover:opacity-80"
+              style={{
+                borderColor: accent + '40',
+                color: accent,
+                backgroundColor: accent + '0D',
+              }}
+              onClick={(e) => {
+                e.stopPropagation()
+                useStore
+                  .getState()
+                  .gotoReferencePage(annotation.referencePage!, annotation.id)
+              }}
+            >
+              📚 View Evidence in Reference (p.{annotation.referencePage})
+            </button>
           )}
         </div>
       </div>

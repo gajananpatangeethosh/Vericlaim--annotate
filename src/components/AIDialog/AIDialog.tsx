@@ -1,5 +1,6 @@
 import { useStore } from '../../store/useStore'
 import { VERDICT_COLORS, VERDICT_LABELS, VERDICT_ICONS } from '../../utils/constants'
+import { PROVIDERS, PROVIDER_IDS } from '../../utils/providers'
 
 export default function AIDialog() {
   const aiResult = useStore((s) => s.aiResult)
@@ -11,8 +12,12 @@ export default function AIDialog() {
   const setAiDialogOpen = useStore((s) => s.setAiDialogOpen)
   const applyAiResults = useStore((s) => s.applyAiResults)
   const discardAiResults = useStore((s) => s.discardAiResults)
-  const apiKey = useStore((s) => s.apiKey)
+  const apiKey = useStore((s) => s.apiKeys[s.aiProvider])
   const setApiKey = useStore((s) => s.setApiKey)
+  const aiProvider = useStore((s) => s.aiProvider)
+  const setAiProvider = useStore((s) => s.setAiProvider)
+  const aiModel = useStore((s) => s.aiModel)
+  const setAiModel = useStore((s) => s.setAiModel)
   const runAiValidation = useStore((s) => s.runAiValidation)
 
   if (!aiDialogOpen) return null
@@ -72,23 +77,58 @@ export default function AIDialog() {
             </div>
             {!apiKey.trim() && (
               <p className="mt-2 text-[10px] text-gray-400 text-center">
-                Enter your OpenRouter API key and try again
+                Enter your {PROVIDERS[aiProvider].label} API key and try again
               </p>
             )}
           </div>
         )}
 
-        {/* API Key input (if not set) */}
-        {!apiKey && !aiLoading && !aiResult && referencePdfMeta && (
+        {/* Provider / Model / API Key config (shown whenever a reference PDF is loaded
+            and there are no results to display yet) */}
+        {!aiLoading && referencePdfMeta && !(aiResult && aiResult.length > 0) && (
           <div className="px-5 py-4 border-b border-gray-100">
+            <div className="grid grid-cols-2 gap-2 mb-2.5">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Provider
+                </label>
+                <select
+                  className="w-full rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-2 text-xs focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-400"
+                  value={aiProvider}
+                  onChange={(e) => setAiProvider(e.target.value as any)}
+                >
+                  {PROVIDER_IDS.map((id) => (
+                    <option key={id} value={id}>
+                      {PROVIDERS[id].label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Model
+                </label>
+                <select
+                  className="w-full rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-2 text-xs focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-400"
+                  value={aiModel}
+                  onChange={(e) => setAiModel(e.target.value)}
+                >
+                  {PROVIDERS[aiProvider].models.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
             <label className="block text-xs font-medium text-gray-600 mb-1.5">
-              OpenRouter API Key
+              {PROVIDERS[aiProvider].label} API Key
             </label>
             <div className="flex gap-2">
               <input
                 type="password"
                 className="flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-400"
-                placeholder="sk-or-..."
+                placeholder={PROVIDERS[aiProvider].keyPlaceholder}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 onKeyDown={(e) => {

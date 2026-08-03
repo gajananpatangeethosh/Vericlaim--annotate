@@ -4,7 +4,27 @@ import { v4 as uuid } from 'uuid'
 import type { Annotation, Tool, Severity, ValidationCategory, PdfMeta, ChatSession } from '../types'
 import { extractTextFromPDF, verifyClaimsWithReference, claimResultsToAnnotations, extractTextItemsFromPDF } from '../utils/ai'
 import type { PageWithItems } from '../utils/ai'
-import { API_KEY } from '../key'
+import type { AIProvider } from '../utils/providers'
+import { getProviderConfig, PROVIDER_IDS } from '../utils/providers'
+import {
+  API_KEY,
+  GROQ_API_KEY,
+  GEMINI_API_KEY,
+  NVIDIA_API_KEY,
+  CEREBRAS_API_KEY,
+  MISTRAL_API_KEY,
+  TOGETHER_API_KEY,
+} from '../key'
+
+const CODE_KEYS: Record<AIProvider, string> = {
+  openrouter: API_KEY,
+  groq: GROQ_API_KEY,
+  gemini: GEMINI_API_KEY,
+  nvidia: NVIDIA_API_KEY,
+  cerebras: CEREBRAS_API_KEY,
+  mistral: MISTRAL_API_KEY,
+  together: TOGETHER_API_KEY,
+}
 
 interface PendingValidation {
   message: string
@@ -42,6 +62,12 @@ interface AppState {
   hoveredAnnotationId: string | null
   scrollToPage: number | null
   searchQuery: string
+  debugMode: boolean
+
+  /* --- Reference viewer --- */
+  activeView: 'brochure' | 'reference'
+  scrollToReferencePage: number | null
+  flashRefAnnotationId: string | null
 
   /* --- Dialogs --- */
   pendingValidation: PendingValidation | null
@@ -73,6 +99,13 @@ interface AppState {
   setHoveredAnnotationId: (id: string | null) => void
   setScrollToPage: (n: number | null) => void
   setSearchQuery: (q: string) => void
+  setDebugMode: (v: boolean) => void
+
+  /* --- Actions Reference viewer --- */
+  setActiveView: (v: 'brochure' | 'reference') => void
+  setScrollToReferencePage: (n: number | null) => void
+  setFlashRefAnnotationId: (id: string | null) => void
+  gotoReferencePage: (page: number, annotationId?: string | null) => void
 
   /* --- Actions Dialogs --- */
   setPendingValidation: (v: PendingValidation | null) => void
@@ -93,14 +126,19 @@ interface AppState {
   aiProgress: { current: number; total: number }
   aiResult: Annotation[] | null
   aiError: string | null
-  apiKey: string
+  apiKeys: Record<AIProvider, string>
+  aiProvider: AIProvider
+  aiModel: string
   brochureItems: PageWithItems[] | null
+  referenceItems: PageWithItems[] | null
   setAiDialogOpen: (v: boolean) => void
   setAiLoading: (v: boolean) => void
   setAiProgress: (p: { current: number; total: number }) => void
   setAiResult: (r: Annotation[] | null) => void
   setAiError: (e: string | null) => void
   setApiKey: (k: string) => void
+  setAiProvider: (p: AIProvider) => void
+  setAiModel: (m: string) => void
   runAiValidation: () => Promise<void>
   applyAiResults: () => void
   discardAiResults: () => void
@@ -149,6 +187,12 @@ export const useStore = create<AppState>()(
       hoveredAnnotationId: null,
       scrollToPage: null,
       searchQuery: '',
+      debugMode: false,
+
+      /* --- Reference viewer --- */
+      activeView: 'brochure',
+      scrollToReferencePage: null,
+      flashRefAnnotationId: null,
 
       /* --- Dialogs --- */
       pendingValidation: null,
@@ -167,8 +211,11 @@ export const useStore = create<AppState>()(
       aiProgress: { current: 0, total: 0 },
       aiResult: null,
       aiError: null,
-      apiKey: API_KEY,
+      apiKeys: { ...CODE_KEYS },
+      aiProvider: 'groq',
+      aiModel: getProviderConfig('groq').defaultModel,
       brochureItems: null,
+      referenceItems: null,
 
       /* --- Chat --- */
       chatOpen: false,
@@ -261,6 +308,7 @@ export const useStore = create<AppState>()(
       },
 
       /* --- UI Actions --- */
+      setDebugMode: (v) => set({ debugMode: v }),
       setZoom: (zoom) => set({ zoom: Math.max(0.25, Math.min(4, zoom)) }),
       setCurrentTool: (tool) => {
         const state = get()
@@ -275,6 +323,18 @@ export const useStore = create<AppState>()(
       setHoveredAnnotationId: (id) => set({ hoveredAnnotationId: id }),
       setScrollToPage: (n) => set({ scrollToPage: n }),
       setSearchQuery: (q) => set({ searchQuery: q }),
+
+      /* --- Reference Viewer Actions --- */
+      setActiveView: (v) => set({ activeView: v }),
+      setScrollToReferencePage: (n) => set({ scrollToReferencePage: n }),
+      setFlashRefAnnotationId: (id) => set({ flashRefAnnotationId: id }),
+      gotoReferencePage: (page, annotationId) => {
+        set({
+          activeView: 'reference',
+          scrollToReferencePage: page,
+          flashRefAnnotationId: annotationId ?? null,
+        })
+      },
 
       /* --- Dialog Actions --- */
       setPendingValidation: (v) => set({ pendingValidation: v }),
@@ -293,7 +353,12 @@ export const useStore = create<AppState>()(
       setAiProgress: (p) => set({ aiProgress: p }),
       setAiResult: (r) => set({ aiResult: r }),
       setAiError: (e) => set({ aiError: e }),
-      setApiKey: (k) => set({ apiKey: k }),
+      setApiKey: (k) => set((s) => ({ apiKeys: { ...s.apiKeys, [s.aiProvider]: k } })),
+      setAiProvider: (p) => {
+        const cfg = getProviderConfig(p)
+        set({ aiProvider: p, aiModel: cfg.defaultModel })
+      },
+      setAiModel: (m) => set({ aiModel: m }),
 
       runAiValidation: async () => {
         const state = get()
@@ -313,13 +378,13 @@ export const useStore = create<AppState>()(
           return
         }
 
-        const currentKey = get().apiKey
+        const currentKey = get().apiKeys[get().aiProvider]
         if (!currentKey?.trim()) {
           set({
             aiDialogOpen: true,
             aiLoading: false,
             aiResult: [],
-            aiError: 'Enter your OpenRouter API key to run claim verification',
+            aiError: `Enter your ${getProviderConfig(get().aiProvider).label} API key to run claim verification`,
             aiProgress: { current: 0, total: 0 },
           })
           return
@@ -350,33 +415,40 @@ export const useStore = create<AppState>()(
           }
 
           // Extract text from both PDFs
-          const [brochurePages, referencePages, brochureItems] = await Promise.all([
+          const [brochurePages, referencePages, brochureItems, referenceItems] = await Promise.all([
             extractTextFromPDF(brochureData),
             extractTextFromPDF(referenceData),
             extractTextItemsFromPDF(brochureData),
+            extractTextItemsFromPDF(referenceData),
           ])
 
           set({ aiProgress: { current: 0, total: brochurePages.length } })
 
           // Verify claims in brochure against reference
-          const apiKeyToUse = get().apiKey || API_KEY
-          console.log('[VeriClaim] apiKey length:', apiKeyToUse?.length, '| empty:', !apiKeyToUse)
+          const apiKeyToUse = get().apiKeys[get().aiProvider]
+          const provider = getProviderConfig(get().aiProvider)
+          const model = get().aiModel
+          console.log('[VeriClaim] provider:', provider.label, '| model:', model, '| apiKey length:', apiKeyToUse?.length, '| empty:', !apiKeyToUse)
           const results = await verifyClaimsWithReference(
             brochurePages,
             referencePages,
             apiKeyToUse,
+            provider,
+            model,
             (current, total) => {
               set({ aiProgress: { current, total } })
-            }
+            },
+            brochureItems
           )
 
           // Convert to annotations with exact text positions
           const { pageWidth, pageHeight, zoom } = get()
-          const annotations = claimResultsToAnnotations(results, pageWidth, pageHeight, zoom, brochureItems)
+          const annotations = claimResultsToAnnotations(results, pageWidth, pageHeight, zoom, brochureItems, referenceItems)
 
           set({
             aiResult: annotations,
             brochureItems,
+            referenceItems,
             aiLoading: false,
             aiProgress: { current: 0, total: 0 },
           })
@@ -512,18 +584,20 @@ export const useStore = create<AppState>()(
         })
 
         try {
+          const provider = getProviderConfig(get().aiProvider)
+          const model = get().aiModel
           const response = await fetch(
-            'https://openrouter.ai/api/v1/chat/completions',
+            provider.baseUrl,
             {
               method: 'POST',
               headers: {
-                Authorization: `Bearer ${state.apiKey || API_KEY}`,
+                Authorization: `Bearer ${state.apiKeys[get().aiProvider] || API_KEY}`,
                 'Content-Type': 'application/json',
                 'HTTP-Referer': window.location.origin,
                 'X-Title': 'VeriClaim',
               },
               body: JSON.stringify({
-                model: 'openrouter/free',
+                model,
                 messages: [
                   {
                     role: 'system',
@@ -594,7 +668,8 @@ export const useStore = create<AppState>()(
           selectedAnnotationId: null,
           hoveredAnnotationId: null,
           scrollToPage: null,
-          searchQuery: '',
+      searchQuery: '',
+      debugMode: false,
           pendingValidation: null,
           showValidationDialog: false,
           drawing: null,
@@ -605,6 +680,10 @@ export const useStore = create<AppState>()(
           aiLoading: false,
           aiProgress: { current: 0, total: 0 },
           brochureItems: null,
+          referenceItems: null,
+          activeView: 'brochure',
+          scrollToReferencePage: null,
+          flashRefAnnotationId: null,
           chatOpen: false,
           chatSelectedText: '',
           chatPage: null,
@@ -630,14 +709,29 @@ export const useStore = create<AppState>()(
         currentTool: state.currentTool,
         searchQuery: state.searchQuery,
         chatSessions: state.chatSessions,
-        apiKey: state.apiKey,
+        apiKeys: state.apiKeys,
+        aiProvider: state.aiProvider,
+        aiModel: state.aiModel,
       }),
       merge: (persisted, current) => {
         const merged = { ...current, ...(persisted as Partial<AppState>) }
-        const currentKey = (current as AppState).apiKey
-        // Always use the code-level key if it differs from persisted (ensures key rotation)
-        if (!merged.apiKey || merged.apiKey.length < 20 || merged.apiKey !== currentKey) {
-          merged.apiKey = currentKey
+        // Guard against stale/invalid persisted provider or model values
+        const provider = merged.aiProvider as AIProvider
+        if (!provider || !getProviderConfig(provider)) {
+          merged.aiProvider = 'openrouter'
+        }
+        const cfg = getProviderConfig(merged.aiProvider as AIProvider)
+        if (!merged.aiModel || !cfg.models.includes(merged.aiModel)) {
+          merged.aiModel = cfg.defaultModel
+        }
+        // Per-provider API keys: always use the code-level keys as the base,
+        // but keep any user-entered keys the user may have typed in-session.
+        merged.apiKeys = { ...CODE_KEYS, ...(merged.apiKeys ?? {}) }
+        for (const p of PROVIDER_IDS) {
+          const k = merged.apiKeys[p]
+          if (!k || k.length < 20) {
+            merged.apiKeys[p] = CODE_KEYS[p]
+          }
         }
         return merged
       },

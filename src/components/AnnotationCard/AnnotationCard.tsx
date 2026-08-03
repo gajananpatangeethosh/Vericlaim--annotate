@@ -62,6 +62,17 @@ export default function AnnotationCard({ annotation }: Props) {
               </span>
               <span className="text-xs text-gray-400">·</span>
               <span className="text-xs text-gray-500">Pg {annotation.page}</span>
+              {annotation.type === 'highlight' && annotation.referencePage && (
+                <>
+                  <span className="text-xs text-gray-400">·</span>
+                  <span className="text-xs text-amber-600 font-medium">
+                    Ref p.{annotation.referencePage}
+                    {annotation.referenceLocationStatus === 'not_found' && (
+                      <span className="text-gray-400 font-normal"> (not located)</span>
+                    )}
+                  </span>
+                </>
+              )}
             </div>
             {annotation.type === 'validation' && annotation.severity && (
               <span
@@ -304,6 +315,23 @@ export default function AnnotationCard({ annotation }: Props) {
               <option value="rejected">Rejected</option>
             </select>
           )}
+          {/* Jump to evidence in reference paper */}
+          {annotation.type === 'highlight' &&
+            annotation.referencePage &&
+            annotation.referenceLocationStatus === 'found' && (
+              <button
+                className="btn-icon !p-1 text-[11px]"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  useStore
+                    .getState()
+                    .gotoReferencePage(annotation.referencePage!, annotation.id)
+                }}
+                title={`View evidence on reference page ${annotation.referencePage}`}
+              >
+                📚
+              </button>
+            )}
           <button
             className="btn-icon !p-1 text-red-500 hover:bg-red-50 hover:text-red-600"
             onClick={(e) => {

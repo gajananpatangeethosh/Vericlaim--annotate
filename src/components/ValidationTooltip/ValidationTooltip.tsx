@@ -14,25 +14,24 @@ export default function ValidationTooltip({ annotation }: Props) {
 
   return (
     <div
-      className="pointer-events-none absolute z-50 animate-fade-in select-none"
+      className="pointer-events-none select-none"
       style={{
         bottom: 'calc(100% + 8px)',
         left: '50%',
         transform: 'translateX(-50%)',
         minWidth: 180,
         maxWidth: 280,
+        position: 'absolute',
+        zIndex: 100,
       }}
     >
-      {/* Main card */}
       <div
         className="rounded-xl bg-white shadow-xl border overflow-hidden"
         style={{ borderColor: accent + '50', borderWidth: 1 }}
       >
-        {/* Colored header bar */}
         <div className="h-1.5 w-full" style={{ backgroundColor: accent }} />
 
         <div className="px-3 py-2.5">
-          {/* Top row: severity icon + category */}
           <div className="flex items-center gap-2 mb-1">
             <span className="text-sm">{icon}</span>
             <span
@@ -51,12 +50,10 @@ export default function ValidationTooltip({ annotation }: Props) {
             </span>
           </div>
 
-          {/* Message */}
           <p className="text-xs font-medium text-gray-800 leading-relaxed break-words">
             {message}
           </p>
 
-          {/* Snippet if present and different from message */}
           {annotation.text && annotation.text !== message && (
             <div
               className="mt-1.5 pt-1.5 border-t border-gray-100"
@@ -70,7 +67,6 @@ export default function ValidationTooltip({ annotation }: Props) {
         </div>
       </div>
 
-      {/* Arrow */}
       <div
         className="absolute -bottom-1 left-1/2 -translate-x-1/2 h-2 w-2 rotate-45"
         style={{

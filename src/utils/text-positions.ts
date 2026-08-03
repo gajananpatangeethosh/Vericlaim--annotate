@@ -1,153 +1,131 @@
-import type { Bounds } from '../types'
-
 export interface TextSpan {
   text: string
   rect: DOMRect
 }
 
-export function getPageTextSpans(pageElement: HTMLElement): TextSpan[] {
-  const spans = pageElement.querySelectorAll('.textLayer span[role="presentation"]')
-  const result: TextSpan[] = []
-  spans.forEach((span) => {
-    const text = span.textContent || ''
-    if (!text.trim()) return
-    const rect = span.getBoundingClientRect()
-    if (rect.width === 0 || rect.height === 0) return
-    result.push({ text, rect })
-  })
-  return result
-}
+const textLayerObservers = new Map<HTMLElement, MutationObserver>()
+const textLayerCache = new WeakMap<HTMLElement, TextSpan[]>()
 
-export function findClaimBoundsFromSpans(
-  spans: TextSpan[],
-  claimText: string,
-  wrapperRect: DOMRect
-): Bounds[] | null {
-  if (spans.length === 0 || !claimText.trim()) return null
+export function observeTextLayer(
+  pageElement: HTMLElement,
+  callback: (spans: TextSpan[]) => void
+): () => void {
+  const existing = textLayerObservers.get(pageElement)
+  if (existing) existing.disconnect()
 
-  let fullText = ''
-  const offsets: Array<{ spanIdx: number; charStart: number; charEnd: number }> = []
-  let charCursor = 0
+  const checkAndNotify = () => {
+    const textLayer = pageElement.querySelector('.textLayer')
+    if (!textLayer) return false
+    const spans = textLayer.querySelectorAll('span[role="presentation"]')
+    if (spans.length === 0) return false
 
-  for (let i = 0; i < spans.length; i++) {
-    const t = spans[i].text
-    offsets.push({ spanIdx: i, charStart: charCursor, charEnd: charCursor + t.length })
-    fullText += t
-    charCursor += t.length
-  }
-
-  // Try multiple matching strategies
-  const searchText = claimText.replace(/\s+/g, ' ').trim()
-  const normalizedFull = fullText.replace(/\s+/g, ' ')
-
-  let idx = fullText.indexOf(searchText)
-  let matchLen = searchText.length
-
-  // Strategy 2: match against normalized full text
-  if (idx < 0) {
-    const nIdx = normalizedFull.indexOf(searchText)
-    if (nIdx >= 0) {
-      // Map back to original offsets by scanning
-      idx = nIdx
-      matchLen = searchText.length
-    }
-  }
-
-  // Strategy 3: try first 40 chars (LLM may truncate or rephrase the tail)
-  if (idx < 0 && searchText.length > 40) {
-    const prefix = searchText.substring(0, 40).trim()
-    idx = fullText.indexOf(prefix)
-    matchLen = prefix.length
-  }
-
-  // Strategy 4: try last 40 chars
-  if (idx < 0 && searchText.length > 40) {
-    const suffix = searchText.substring(searchText.length - 40).trim()
-    idx = fullText.indexOf(suffix)
-    matchLen = suffix.length
-  }
-
-  // Strategy 5: try first significant word sequence (20+ chars)
-  if (idx < 0) {
-    const words = searchText.split(' ')
-    for (let len = Math.min(words.length, 8); len >= 3; len--) {
-      const fragment = words.slice(0, len).join(' ')
-      if (fragment.length < 15) continue
-      idx = fullText.indexOf(fragment)
-      matchLen = fragment.length
-      if (idx >= 0) break
-    }
-  }
-
-  if (idx < 0) return null
-
-  const endIdx = idx + matchLen
-
-  const matchedSpans: Array<{ span: TextSpan; overlapStart: number; overlapEnd: number }> = []
-  for (const off of offsets) {
-    const spanEnd = off.charEnd
-    const spanStart = off.charStart
-    if (spanEnd > idx && spanStart < endIdx) {
-      const overlapStart = Math.max(idx, spanStart) - spanStart
-      const overlapEnd = Math.min(endIdx, spanEnd) - spanStart
-      matchedSpans.push({ span: spans[off.spanIdx], overlapStart, overlapEnd })
-    }
-  }
-
-  if (matchedSpans.length === 0) return null
-
-  const lines: Array<Array<{ span: TextSpan; overlapStart: number; overlapEnd: number }>> = []
-  let currentLine: Array<{ span: TextSpan; overlapStart: number; overlapEnd: number }> = [matchedSpans[0]]
-
-  for (let i = 1; i < matchedSpans.length; i++) {
-    const prev = matchedSpans[i - 1].span.rect
-    const curr = matchedSpans[i].span.rect
-    const verticalGap = Math.abs(curr.top - prev.bottom)
-    const sameLine = verticalGap < prev.height * 0.5
-
-    if (sameLine) {
-      currentLine.push(matchedSpans[i])
-    } else {
-      lines.push(currentLine)
-      currentLine = [matchedSpans[i]]
-    }
-  }
-  lines.push(currentLine)
-
-  const result: Bounds[] = []
-  for (const line of lines) {
-    let minX = Infinity, maxX = -Infinity
-    let minY = Infinity, maxY = -Infinity
-
-    for (const { span } of line) {
-      const r = span.rect
-      minX = Math.min(minX, r.left)
-      maxX = Math.max(maxX, r.right)
-      minY = Math.min(minY, r.top)
-      maxY = Math.max(maxY, r.bottom)
-    }
-
-    result.push({
-      x: minX - wrapperRect.left,
-      y: minY - wrapperRect.top,
-      width: maxX - minX,
-      height: maxY - minY,
+    const result: TextSpan[] = []
+    spans.forEach((span) => {
+      const text = span.textContent || ''
+      if (!text.trim()) return
+      const rect = span.getBoundingClientRect()
+      if (rect.width === 0 || rect.height === 0) return
+      result.push({ text, rect })
     })
+
+    if (result.length > 0) {
+      textLayerCache.set(pageElement, result)
+      callback(result)
+      return true
+    }
+    return false
   }
 
-  return result.length > 0 ? result : null
+  if (checkAndNotify()) {
+    return () => {}
+  }
+
+  const observer = new MutationObserver(() => {
+    if (checkAndNotify()) {
+      observer.disconnect()
+      textLayerObservers.delete(pageElement)
+    }
+  })
+
+  observer.observe(pageElement, {
+    childList: true,
+    subtree: true,
+  })
+
+  textLayerObservers.set(pageElement, observer)
+
+  return () => {
+    observer.disconnect()
+    textLayerObservers.delete(pageElement)
+  }
 }
 
-export function computeUnionBounds(lineBounds: Bounds[]): Bounds {
-  let minX = Infinity, maxX = -Infinity
-  let minY = Infinity, maxY = -Infinity
+export function getCachedTextSpans(pageElement: HTMLElement): TextSpan[] {
+  return textLayerCache.get(pageElement) || []
+}
 
-  for (const b of lineBounds) {
-    minX = Math.min(minX, b.x)
-    maxX = Math.max(maxX, b.x + b.width)
-    minY = Math.min(minY, b.y)
-    maxY = Math.max(maxY, b.y + b.height)
-  }
+export function clearTextSpanCache(pageElement: HTMLElement): void {
+  textLayerCache.delete(pageElement)
+}
 
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+export function waitForTextLayer(
+  pageElement: HTMLElement,
+  timeoutMs = 5000
+): Promise<TextSpan[]> {
+  return new Promise((resolve) => {
+    const cached = textLayerCache.get(pageElement)
+    if (cached && cached.length > 0) {
+      resolve(cached)
+      return
+    }
+
+    const textLayer = pageElement.querySelector('.textLayer')
+    if (textLayer) {
+      const spans = textLayer.querySelectorAll('span[role="presentation"]')
+      if (spans.length > 0) {
+        const result: TextSpan[] = []
+        spans.forEach((span) => {
+          const text = span.textContent || ''
+          if (!text.trim()) return
+          const rect = span.getBoundingClientRect()
+          if (rect.width === 0 || rect.height === 0) return
+          result.push({ text, rect })
+        })
+        if (result.length > 0) {
+          textLayerCache.set(pageElement, result)
+          resolve(result)
+          return
+        }
+      }
+    }
+
+    const observer = new MutationObserver(() => {
+      const textLayer = pageElement.querySelector('.textLayer')
+      if (!textLayer) return
+      const spans = textLayer.querySelectorAll('span[role="presentation"]')
+      if (spans.length === 0) return
+
+      const result: TextSpan[] = []
+      spans.forEach((span) => {
+        const text = span.textContent || ''
+        if (!text.trim()) return
+        const rect = span.getBoundingClientRect()
+        if (rect.width === 0 || rect.height === 0) return
+        result.push({ text, rect })
+      })
+
+      if (result.length > 0) {
+        observer.disconnect()
+        textLayerCache.set(pageElement, result)
+        resolve(result)
+      }
+    })
+
+    observer.observe(pageElement, { childList: true, subtree: true })
+
+    setTimeout(() => {
+      observer.disconnect()
+      resolve(textLayerCache.get(pageElement) || [])
+    }, timeoutMs)
+  })
 }

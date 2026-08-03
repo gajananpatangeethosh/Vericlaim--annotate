@@ -3,8 +3,8 @@ import { Page } from 'react-pdf'
 import { useStore } from '../../store/useStore'
 import { v4 as uuid } from 'uuid'
 import AnnotationLayer from './AnnotationLayer'
-import { normaliseBounds } from '../../utils/pdf'
-import { getPageTextSpans } from '../../utils/text-positions'
+import { screenToCss } from '../../utils/coordinates'
+import { observeTextLayer, getCachedTextSpans } from '../../utils/text-positions'
 import type { Bounds } from '../../types'
 import type { TextSpan } from '../../utils/text-positions'
 
@@ -33,6 +33,7 @@ export default function PDFPage({ pageNumber }: Props) {
   const annotations = useStore((s) => s.annotations)
   const selectedAnnotationId = useStore((s) => s.selectedAnnotationId)
   const hoveredAnnotationId = useStore((s) => s.hoveredAnnotationId)
+  const debugMode = useStore((s) => s.debugMode)
 
   const wrapperRef = useRef<HTMLDivElement>(null)
   const [pageLoaded, setPageLoaded] = useState(false)
@@ -45,7 +46,6 @@ export default function PDFPage({ pageNumber }: Props) {
   const pageAnnotations = annotations.filter((a) => a.page === pageNumber)
   const pdfItemsForPage = brochureItems?.find((p) => p.page === pageNumber) ?? null
 
-  // Global annotation index map for numbered badges
   const sortedAll = useMemo(
     () =>
       [...annotations].sort((a, b) => a.page - b.page || a.createdAt.localeCompare(b.createdAt)),
@@ -62,25 +62,20 @@ export default function PDFPage({ pageNumber }: Props) {
     setPageLoaded(true)
   }, [])
 
-  // Query text layer spans with retry (text layer may take time to render)
   useEffect(() => {
     if (!pageLoaded || !wrapperRef.current) return
-    let attempts = 0
-    const maxAttempts = 5
-    const tryQuery = () => {
-      if (!wrapperRef.current) return
-      const spans = getPageTextSpans(wrapperRef.current)
-      if (spans.length > 0) {
-        setTextSpans(spans)
-        return
-      }
-      attempts++
-      if (attempts < maxAttempts) {
-        setTimeout(tryQuery, 150)
-      }
+
+    const cached = getCachedTextSpans(wrapperRef.current)
+    if (cached.length > 0) {
+      setTextSpans(cached)
+      return
     }
-    const timer = setTimeout(tryQuery, 100)
-    return () => clearTimeout(timer)
+
+    const cleanup = observeTextLayer(wrapperRef.current, (spans) => {
+      setTextSpans(spans)
+    })
+
+    return cleanup
   }, [pageLoaded, zoom])
 
   /* ─── Text selection (highlight mode) ─── */
@@ -110,15 +105,14 @@ export default function PDFPage({ pageNumber }: Props) {
       }
       if (!rect || rect.width === 0 || rect.height === 0) return
 
-      const relBounds: Bounds = normaliseBounds(
-        {
-          x: rect.left - wrapperRect.left,
-          y: rect.top - wrapperRect.top,
-          width: rect.width,
-          height: rect.height,
-        },
-        zoom
-      )
+      const screenBounds: Bounds = {
+        x: rect.left - wrapperRect.left,
+        y: rect.top - wrapperRect.top,
+        width: rect.width,
+        height: rect.height,
+      }
+
+      const cssBounds = screenToCss(screenBounds, zoom)
 
       const now = new Date().toISOString()
       const selectedText = sel.toString().trim()
@@ -128,7 +122,7 @@ export default function PDFPage({ pageNumber }: Props) {
         page: pageNumber,
         type: 'highlight',
         text: selectedText,
-        bounds: relBounds,
+        bounds: cssBounds,
         color: HIGHLIGHT_COLOR,
         createdAt: now,
         updatedAt: now,
@@ -151,10 +145,14 @@ export default function PDFPage({ pageNumber }: Props) {
     (clientX: number, clientY: number) => {
       const rect = wrapperRef.current?.getBoundingClientRect()
       if (!rect) return { x: 0, y: 0 }
-      return {
-        x: (clientX - rect.left) / zoom,
-        y: (clientY - rect.top) / zoom,
+      const screenBounds: Bounds = {
+        x: clientX - rect.left,
+        y: clientY - rect.top,
+        width: 0,
+        height: 0,
       }
+      const cssBounds = screenToCss(screenBounds, zoom)
+      return { x: cssBounds.x, y: cssBounds.y }
     },
     [zoom]
   )
@@ -234,7 +232,6 @@ export default function PDFPage({ pageNumber }: Props) {
 
   const overlayPointerEvents = isActive ? 'auto' : 'none'
 
-  /* ─── Erase mode: click on annotation ─── */
   const handleOverlayClick = useCallback(
     (e: React.MouseEvent) => {
       if (currentTool === 'erase') {
@@ -266,7 +263,6 @@ export default function PDFPage({ pageNumber }: Props) {
         onLoadSuccess={handlePageLoad}
       />
 
-      {/* Annotation + Drawing Overlay */}
       {pageLoaded && (
         <div
           className="absolute inset-0 select-none"
@@ -290,9 +286,9 @@ export default function PDFPage({ pageNumber }: Props) {
             onSelect={(id) => setSelectedAnnotationId(id)}
             onDelete={(id) => deleteAnnotation(id)}
             onUpdate={(id, partial) => updateAnnotation(id, partial)}
+            debugMode={debugMode}
           />
 
-          {/* Drawing preview */}
           {isDrawing && (
             <div
               className="absolute border-2 border-dashed border-brand-500 bg-brand-100/20 pointer-events-none"

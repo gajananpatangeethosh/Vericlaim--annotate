@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { useStore } from '../../store/useStore'
 import { exportAnnotations, importAnnotations, generateFakeValidations } from '../../utils/pdf'
-import { exportAnnotatedPDF } from '../../utils/export-pdf'
+import { exportAnnotatedPDF, exportAnnotatedReferencePDF } from '../../utils/export-pdf'
 import { savePdfBinary, PDF_KEYS } from '../../utils/idb'
 import { readFileAsDataURL } from '../../utils/pdf'
 import { TOOL_NAMES, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '../../utils/constants'
@@ -21,6 +21,8 @@ const TOOL_ICONS: Record<string, string> = {
 export default function Toolbar() {
   const pdfMeta = useStore((s) => s.pdfMeta)
   const referencePdfMeta = useStore((s) => s.referencePdfMeta)
+  const activeView = useStore((s) => s.activeView)
+  const setActiveView = useStore((s) => s.setActiveView)
   const numPages = useStore((s) => s.numPages)
   const annotations = useStore((s) => s.annotations)
   const zoom = useStore((s) => s.zoom)
@@ -42,6 +44,8 @@ export default function Toolbar() {
   const redo = useStore((s) => s.redo)
   const fitWidthFn = useStore((s) => s.fitWidthFn)
   const fitPageFn = useStore((s) => s.fitPageFn)
+  const debugMode = useStore((s) => s.debugMode)
+  const setDebugMode = useStore((s) => s.setDebugMode)
   const [showExportMenu, setShowExportMenu] = useState(false)
 
   const handleExportPDF = async () => {
@@ -50,6 +54,15 @@ export default function Toolbar() {
       await exportAnnotatedPDF(annotations)
     } catch (err) {
       setError('Failed to export PDF: ' + (err as Error).message)
+    }
+  }
+
+  const handleExportReferencePDF = async () => {
+    setShowExportMenu(false)
+    try {
+      await exportAnnotatedReferencePDF(annotations)
+    } catch (err) {
+      setError('Failed to export research paper: ' + (err as Error).message)
     }
   }
 
@@ -116,13 +129,17 @@ export default function Toolbar() {
       setError('Upload a reference/research paper PDF first to run claim verification')
       return
     }
-    const apiKey = useStore.getState().apiKey
-    if (apiKey) {
-      useStore.getState().runAiValidation()
-    } else {
-      useStore.getState().setAiDialogOpen(true)
-    }
+    // Always open the AI dialog so the user can choose the provider/model
+    // before running, instead of auto-starting with the pre-filled key.
+    useStore.getState().setAiDialogOpen(true)
   }
+
+  const hasRefHighlights = annotations.some(
+    (a) =>
+      a.referencePage &&
+      a.referenceBounds &&
+      a.referenceLocationStatus !== 'not_found'
+  )
 
   return (
     <header className="flex items-center gap-2 border-b border-gray-200 bg-white px-4 py-2 shadow-sm">
@@ -184,6 +201,35 @@ export default function Toolbar() {
           if (file) handleReferenceUpload(file)
         }}
       />
+
+      {/* Brochure / Reference view toggle */}
+      <div
+        className="flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white p-0.5 shadow-card"
+        title={referencePdfMeta ? 'Switch between brochure and reference paper' : 'Upload a reference PDF first'}
+      >
+        <button
+          className={`text-[10px] font-medium px-2 py-1 rounded transition-colors ${
+            activeView === 'brochure'
+              ? 'bg-brand-600 text-white'
+              : 'text-gray-600 hover:bg-gray-100'
+          }`}
+          onClick={() => setActiveView('brochure')}
+        >
+          📘 Brochure
+        </button>
+        <button
+          className={`text-[10px] font-medium px-2 py-1 rounded transition-colors ${
+            activeView === 'reference'
+              ? 'bg-brand-600 text-white'
+              : 'text-gray-600 hover:bg-gray-100'
+          }`}
+          onClick={() => setActiveView('reference')}
+          disabled={!referencePdfMeta}
+          style={!referencePdfMeta ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+        >
+          📚 Reference
+        </button>
+      </div>
 
       {/* Undo / Redo */}
       <div className="toolbar-group">
@@ -322,7 +368,31 @@ export default function Toolbar() {
                 <span>📄</span>
                 <div className="text-left">
                   <p className="font-medium">Export PDF (Annotated)</p>
-                  <p className="text-[10px] text-gray-400">Renders annotations onto the PDF</p>
+                  <p className="text-[10px] text-gray-400">Sticky-note popups with full details</p>
+                </div>
+              </button>
+              <button
+                className="flex w-full items-center gap-2 px-4 py-2 text-xs text-gray-700 hover:bg-gray-50"
+                onClick={handleExportReferencePDF}
+                disabled={!referencePdfMeta || !hasRefHighlights}
+                title={
+                  !referencePdfMeta
+                    ? 'Upload a reference PDF first'
+                    : !hasRefHighlights
+                    ? 'Run validation and apply results to generate reference highlights'
+                    : 'Download the research paper with evidence highlights'
+                }
+              >
+                <span>📚</span>
+                <div className="text-left">
+                  <p className="font-medium">Download Annotated Research Paper</p>
+                  <p className="text-[10px] text-gray-400">
+                    {!referencePdfMeta
+                      ? 'Requires an uploaded reference PDF'
+                      : !hasRefHighlights
+                      ? 'Run validation to generate evidence highlights'
+                      : 'Evidence highlights + hover popups'}
+                  </p>
                 </div>
               </button>
             </div>
@@ -338,6 +408,15 @@ export default function Toolbar() {
       >
         📤 Import
       </button>
+
+      <button
+        className={debugMode ? 'btn-ghost-active text-[10px]' : 'btn-icon text-[10px]'}
+        onClick={() => setDebugMode(!debugMode)}
+        title="Toggle Debug Mode"
+      >
+        🐛
+      </button>
+
       <input
         ref={importRef}
         type="file"
