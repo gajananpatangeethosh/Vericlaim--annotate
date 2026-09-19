@@ -106,6 +106,102 @@ export const VERDICT_ICONS: Record<Verdict, string> = {
   unsupported: '❌',
 }
 
+export const IMAGE_GEN_MODELS: Array<{ id: string; label: string; description?: string }> = [
+  { id: '', label: 'Default (gpt-image-1-mini)' },
+  { id: 'openai/gpt-image-2', label: 'GPT Image 2' },
+  { id: 'google/gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image' },
+  { id: 'black-forest-labs/flux.2-flex', label: 'FLUX.2 Flex' },
+  { id: 'qwen/qwen-image-2.0', label: 'Qwen Image 2.0' },
+  { id: 'stabilityai/stable-diffusion-3-medium', label: 'Stable Diffusion 3' },
+]
+
+/* ── Brochure Templates ────────────────────────────────────────── */
+import type { BrochureTemplateId } from '../types'
+
+export interface BrochureTemplate {
+  id: BrochureTemplateId
+  label: string
+  description: string
+  // preview swatches
+  swatches: [string, string, string] // primary, secondary, accent
+  accent: string // single accent for card border
+  preview: string // emoji/icon for card
+  palette: { primary: string; secondary: string; accent: string }
+  layoutHint: string // short prompt fragment injected into LLM
+}
+
+export const BROCHURE_TEMPLATES: BrochureTemplate[] = [
+  {
+    id: 'modern-minimal',
+    label: 'Modern Minimal',
+    description: 'Clean, airy, editorial — generous whitespace, thin rules',
+    swatches: ['#0f172a', '#64748b', '#e2e8f0'],
+    accent: '#0f172a',
+    preview: '◐',
+    palette: { primary: '#0f172a', secondary: '#475569', accent: '#e2e8f0' },
+    layoutHint: 'STYLE: Modern Minimal — ultra-clean editorial, generous whitespace, thin 1px rules, small caps headings, muted slate palette, subtle card shadows.',
+  },
+  {
+    id: 'clinical-blue',
+    label: 'Clinical Trust',
+    description: 'Medical-grade, trustworthy — blue header, rounded cards',
+    swatches: ['#2563eb', '#0ea5e9', '#dbeafe'],
+    accent: '#2563eb',
+    preview: '⬢',
+    palette: { primary: '#1e40af', secondary: '#0ea5e9', accent: '#3b82f6' },
+    layoutHint: 'STYLE: Clinical Trust — confident medical brand, deep blue header (#1e40af), sky secondary, soft blue cards, rounded corners, clear hierarchy.',
+  },
+  {
+    id: 'vibrant-wellness',
+    label: 'Vibrant Wellness',
+    description: 'Energetic, human — gradients, warm accent, friendly',
+    swatches: ['#059669', '#f59e0b', '#fef3c7'],
+    accent: '#059669',
+    preview: '✦',
+    palette: { primary: '#047857', secondary: '#d97706', accent: '#f59e0b' },
+    layoutHint: 'STYLE: Vibrant Wellness — energetic wellness, emerald primary (#047857), amber accent (#f59e0b), gradient header, rounded image frames, warm human tone.',
+  },
+  {
+    id: 'elegant-corporate',
+    label: 'Elegant Corporate',
+    description: 'Premium, serif-accented — navy + gold, high contrast',
+    swatches: ['#1e293b', '#b45309', '#fef9c3'],
+    accent: '#b45309',
+    preview: '⬣',
+    palette: { primary: '#0f172a', secondary: '#92400e', accent: '#b45309' },
+    layoutHint: 'STYLE: Elegant Corporate — premium executive, slate/navy primary, warm gold accent (#b45309), serif-inspired headings, high contrast, structured grid, thin gold rule.',
+  },
+  {
+    id: 'tri-fold',
+    label: 'Tri-Fold Compact',
+    description: 'Dense, scannable — 3-column rhythm, icon bullets',
+    swatches: ['#334155', '#06b6d4', '#ecfeff'],
+    accent: '#06b6d4',
+    preview: '▭',
+    palette: { primary: '#334155', secondary: '#0891b2', accent: '#06b6d4' },
+    layoutHint: 'STYLE: Tri-Fold Compact — dense, scannable tri-fold rhythm, slate primary, cyan accent (#06b6d4), icon bullets, compact spacing, grid alignment.',
+  },
+]
+
+export const BROCHURE_PAGE_OPTIONS = [1, 2, 3, 4, 5, 6] as const
+
+/* ── Canva-like palettes ─────────────────────────────────── */
+export const FONT_FAMILIES: Array<{ id: string; label: string; stack: string }> = [
+  { id: 'sans', label: 'Sans', stack: 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial' },
+  { id: 'serif', label: 'Serif', stack: 'ui-serif, Georgia, Cambria, Times New Roman, serif' },
+  { id: 'display', label: 'Display', stack: '"Space Grotesk", ui-sans-serif, system-ui' },
+  { id: 'mono', label: 'Mono', stack: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
+  { id: 'hand', label: 'Hand', stack: '"Comic Sans MS", "Segoe Print", cursive' },
+]
+
+export const TEXT_COLORS = ['#0f172a', '#334155', '#475569', '#2563eb', '#059669', '#b45309', '#dc2626', '#ffffff'] as const
+export const BG_COLORS = ['#ffffff', '#f8fafc', '#fef3c7', '#dbeafe', '#dcfce7', '#fef9c3', '#fee2e2', '#0f172a'] as const
+
+/** Extended palettes for dark themes and accent colors used by brochure designs. */
+export const DARK_BG_COLORS = ['#0f172a', '#000000', '#1a0a2e', '#111827', '#1e293b', '#334155'] as const
+export const CARD_BG_COLORS = ['#1e293b', '#252f3f', '#334155', '#1a1a2e', '#0f172a'] as const
+export const ACCENT_COLORS = ['#00e5ff', '#06b6d4', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'] as const
+
 export const DEFAULT_ZOOM = 1.0
 export const ZOOM_STEP = 0.25
 export const MIN_ZOOM = 0.25

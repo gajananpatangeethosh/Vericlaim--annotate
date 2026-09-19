@@ -1,11 +1,13 @@
 import { useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router'
+import { v4 as uuid } from 'uuid'
 import { useStore } from '../../store/useStore'
 import { exportAnnotations, importAnnotations, generateFakeValidations } from '../../utils/pdf'
-import { exportAnnotatedPDF, exportAnnotatedReferencePDF } from '../../utils/export-pdf'
-import { savePdfBinary, PDF_KEYS } from '../../utils/idb'
+import { exportAnnotatedPDF, exportAnnotatedReferencePDF, downloadPdfBytes, pdfBytesToDataUrl } from '../../utils/export-pdf'
+import { savePdfBinary, saveExportFile, PDF_KEYS } from '../../utils/idb'
 import { readFileAsDataURL } from '../../utils/pdf'
 import { TOOL_NAMES, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '../../utils/constants'
-import type { Tool } from '../../types'
+import type { Tool, ExportRecord } from '../../types'
 
 const TOOLS: Tool[] = ['pointer', 'highlight', 'rectangle', 'validation', 'comment', 'erase']
 
@@ -46,12 +48,57 @@ export default function Toolbar() {
   const fitPageFn = useStore((s) => s.fitPageFn)
   const debugMode = useStore((s) => s.debugMode)
   const setDebugMode = useStore((s) => s.setDebugMode)
+  const exportHistory = useStore((s) => s.exportHistory)
   const [showExportMenu, setShowExportMenu] = useState(false)
+  const navigate = useNavigate()
+
+  const verdictCounts = () => {
+    const counts = { verified: 0, partial: 0, unsupported: 0 }
+    for (const a of annotations) {
+      if (a.severity === 'success') counts.verified++
+      else if (a.severity === 'warning') counts.partial++
+      else if (a.severity === 'error') counts.unsupported++
+      else counts.partial++
+    }
+    return counts
+  }
+
+  const saveToHistory = async (type: 'brochure' | 'reference', bytes: Uint8Array) => {
+    try {
+      const fileId = uuid()
+      await saveExportFile(pdfBytesToDataUrl(bytes), fileId)
+      const record: ExportRecord = {
+        id: uuid(),
+        type,
+        brochureName: pdfMeta?.name ?? 'brochure.pdf',
+        referenceName: referencePdfMeta?.name ?? 'reference.pdf',
+        createdAt: new Date().toISOString(),
+        pages: numPages,
+        annotationCount: annotations.length,
+        verdicts: verdictCounts(),
+        sizeBytes: bytes.byteLength,
+        fileId,
+      }
+      useStore.getState().addExportRecord(record)
+      useStore.getState().logAudit(
+        type === 'brochure' ? 'export_pdf' : 'export_reference_pdf',
+        type === 'brochure'
+          ? `Exported annotated brochure PDF (${annotations.length} annotations)`
+          : `Exported annotated research paper (${annotations.length} evidence highlights)`,
+        { filename: type === 'brochure' ? record.brochureName : record.referenceName, annotations: annotations.length },
+        'success'
+      )
+    } catch {
+      // History save is best-effort — the download already succeeded
+    }
+  }
 
   const handleExportPDF = async () => {
     setShowExportMenu(false)
     try {
-      await exportAnnotatedPDF(annotations)
+      const bytes = await exportAnnotatedPDF(annotations)
+      downloadPdfBytes(bytes, `annotated-${Date.now()}.pdf`)
+      await saveToHistory('brochure', bytes)
     } catch (err) {
       setError('Failed to export PDF: ' + (err as Error).message)
     }
@@ -60,7 +107,9 @@ export default function Toolbar() {
   const handleExportReferencePDF = async () => {
     setShowExportMenu(false)
     try {
-      await exportAnnotatedReferencePDF(annotations)
+      const bytes = await exportAnnotatedReferencePDF(annotations)
+      downloadPdfBytes(bytes, `annotated-reference-${Date.now()}.pdf`)
+      await saveToHistory('reference', bytes)
     } catch (err) {
       setError('Failed to export research paper: ' + (err as Error).message)
     }
@@ -82,6 +131,12 @@ export default function Toolbar() {
       await savePdfBinary(dataUrl, PDF_KEYS.brochure)
       useStore.getState().clearAll()
       setPdfMeta({ name: file.name, totalSize: file.size })
+      useStore.getState().logAudit(
+        'brochure_uploaded',
+        `Uploaded brochure PDF "${file.name}"`,
+        { name: file.name, size: file.size },
+        'success'
+      )
     } catch {
       setError('Failed to load PDF')
     } finally {
@@ -99,6 +154,12 @@ export default function Toolbar() {
       const dataUrl = await readFileAsDataURL(file)
       await savePdfBinary(dataUrl, PDF_KEYS.reference)
       setReferencePdfMeta({ name: file.name, totalSize: file.size })
+      useStore.getState().logAudit(
+        'reference_uploaded',
+        `Uploaded research paper "${file.name}"`,
+        { name: file.name, size: file.size },
+        'success'
+      )
     } catch {
       setError('Failed to load reference PDF')
     }
@@ -114,6 +175,12 @@ export default function Toolbar() {
       try {
         const parsed = importAnnotations(reader.result as string)
         replaceAnnotations(parsed)
+        useStore.getState().logAudit(
+          'import_json',
+          `Imported ${parsed.length} annotation(s) from JSON`,
+          { count: parsed.length },
+          'info'
+        )
       } catch {
         setError('Invalid annotation file')
       }
@@ -144,14 +211,14 @@ export default function Toolbar() {
   return (
     <header className="flex items-center gap-2 border-b border-gray-200 bg-white px-4 py-2 shadow-sm">
       {/* Logo */}
-      <div className="flex items-center gap-2 mr-2">
+      <Link to="/" className="flex items-center gap-2 mr-2 hover:opacity-80 transition-opacity" title="VeriClaim Home">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white text-sm font-bold">
-          A
+          V
         </div>
         <span className="hidden text-sm font-semibold text-gray-800 sm:block">
-          Annotate
+          VeriClaim
         </span>
-      </div>
+      </Link>
 
       <div className="h-6 w-px bg-gray-200" />
 
@@ -415,6 +482,28 @@ export default function Toolbar() {
         title="Toggle Debug Mode"
       >
         🐛
+      </button>
+
+      <button
+        className="btn-ghost text-xs !py-1.5"
+        onClick={() => navigate('/brochure')}
+        title="Generate a medical brochure from AI prompt"
+      >
+        🎨 Brochure Builder
+      </button>
+
+      {/* History / Audit log */}
+      <button
+        className="relative btn-ghost text-xs !py-1.5"
+        onClick={() => navigate('/history')}
+        title="View document history and audit log"
+      >
+        📜 History
+        {exportHistory.length > 0 && (
+          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-600 px-1 text-[9px] font-bold text-white">
+            {exportHistory.length}
+          </span>
+        )}
       </button>
 
       <input

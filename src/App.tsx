@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useKeyboard } from './hooks/useKeyboard'
 import Toolbar from './components/Toolbar/Toolbar'
 import PDFViewer from './components/PDFViewer/PDFViewer'
@@ -11,6 +12,10 @@ import { useStore } from './store/useStore'
 export default function App() {
   useKeyboard()
   const activeView = useStore((s) => s.activeView)
+
+  useEffect(() => {
+    useStore.getState().logAudit('app_open', 'Opened the VeriClaim app')
+  }, [])
 
   return (
     <div className="flex h-screen flex-col bg-gray-50">

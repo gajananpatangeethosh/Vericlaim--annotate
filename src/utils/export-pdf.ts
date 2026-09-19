@@ -56,8 +56,13 @@ export function severityToVerdict(severity?: string): Verdict | null {
  * pdf-lib's PDFString writes raw charCodeAt bytes (no Unicode mapping), so
  * non-ASCII characters like em-dashes / curly quotes would be corrupted.
  * Replace them with ASCII-safe equivalents before embedding in the PDF.
+ *
+ * Standard pdf-lib fonts (Helvetica etc.) are WinAnsi-encoded: drawing any
+ * code point outside the WinAnsi table (e.g. ✓, ✕, emoji) with drawText throws
+ * `WinAnsi cannot encode "✓" (0x2713)`. Every string passed to drawText/PDFString
+ * must be filtered through this first.
  */
-function sanitizePdfString(s: string): string {
+export function sanitizePdfString(s: string): string {
   return s
     .replace(/[\u2014\u2015]/g, '-')
     .replace(/\u2013/g, '-')
@@ -66,6 +71,8 @@ function sanitizePdfString(s: string): string {
     .replace(/\u2026/g, '...')
     .replace(/\u2022/g, '-')
     .replace(/\u00A0/g, ' ')
+    // cp1252 undefined bytes (never appear in text, but be safe)
+    .replace(/[\u0081\u008D\u008F\u0090\u009D]/g, '?')
     .replace(/[^\x20-\x7E\xA0-\xFF\n\r\t]/g, '?')
 }
 
@@ -234,7 +241,7 @@ function buildPopupContent(ann: Annotation): { title: string; contents: string }
 
 export async function exportAnnotatedPDF(
   annotations: Annotation[]
-): Promise<void> {
+): Promise<Uint8Array> {
   if (annotations.length === 0) throw new Error('No annotations to export')
 
   const pdfDataUrl = await loadPdfBinary()
@@ -244,6 +251,9 @@ export async function exportAnnotatedPDF(
   const pdfDoc = await PDFDocument.load(arrayBuf)
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
+  // ZapfDingbats supplies ✓/✕ and the comment envelope glyphs — these are not
+  // in the WinAnsi charset so they cannot be drawn with Helvetica.
+  const fontIcon = await pdfDoc.embedFont(StandardFonts.ZapfDingbats)
 
   // Compute global annotation index (same order as web: page then createdAt)
   const sorted = [...annotations].sort(
@@ -301,12 +311,13 @@ export async function exportAnnotatedPDF(
 
       // "💬" indicator if comment annotation
       if (ann.text === 'Comment') {
-        const label = '💬'
-        page.drawText(label, {
+        // Speech bubble isn't in any standard font — use the ZapfDingbats
+        // envelope glyph as a "note" marker.
+        page.drawText('\u2709', {
           x: x + w / 2 - 6,
           y: y + h / 2 - 7,
           size: 12,
-          font,
+          font: fontIcon,
           color: rgb(0.3, 0.3, 0.3),
         })
       }
@@ -343,17 +354,18 @@ export async function exportAnnotatedPDF(
           color: c,
         })
 
-        // Verdict symbol
+        // Verdict symbol — ✓/✕ live in ZapfDingbats, not WinAnsi
         let symbol = '?'
-        if (ann.color === VERDICT_COLORS.verified) symbol = '✓'
+        let symFont = fontBold
+        if (ann.color === VERDICT_COLORS.verified) { symbol = '\u2713'; symFont = fontIcon }
         else if (ann.color === VERDICT_COLORS.partial) symbol = '~'
-        else if (ann.color === VERDICT_COLORS.unsupported) symbol = '✕'
+        else if (ann.color === VERDICT_COLORS.unsupported) { symbol = '\u2715'; symFont = fontIcon }
         const symSize = 9
         page.drawText(symbol, {
           x: x + w - badgeSize / 2 - symSize / 3,
           y: y + h - badgeSize / 2 - symSize / 3,
           size: symSize,
-          font: fontBold,
+          font: symFont,
           color: white,
         })
 
@@ -364,8 +376,7 @@ export async function exportAnnotatedPDF(
 
         // Render evidence as a tooltip-style label below annotation
         if (evidence) {
-          const evidLabel = truncate(evidence, 60)
-          page.drawText(evidLabel, {
+          page.drawText(sanitizePdfString(truncate(evidence, 60)), {
             x: x + 2,
             y: y - 11,
             size: 6,
@@ -384,23 +395,24 @@ export async function exportAnnotatedPDF(
           color: c,
         })
 
-        // Severity symbol inside badge
-        const symbol = ann.severity === 'error' ? '✕'
-          : ann.severity === 'warning' ? '!'
-          : ann.severity === 'success' ? '✓'
-          : 'i'
+        // Severity symbol inside badge — ✓/✕ live in ZapfDingbats, not WinAnsi
+        let symbol = 'i'
+        let symFont = fontBold
+        if (ann.severity === 'error') { symbol = '\u2715'; symFont = fontIcon }
+        else if (ann.severity === 'warning') symbol = '!'
+        else if (ann.severity === 'success') { symbol = '\u2713'; symFont = fontIcon }
         const symSize = 9
         page.drawText(symbol, {
           x: x + w - badgeSize / 2 - symSize / 3,
           y: y + h - badgeSize / 2 - symSize / 3,
           size: symSize,
-          font: fontBold,
+          font: symFont,
           color: white,
         })
 
         // Category label below annotation
         if (ann.category && ann.category !== 'custom') {
-          page.drawText(truncate(ann.category.replace('-', ' '), 14), {
+          page.drawText(sanitizePdfString(truncate(ann.category.replace('-', ' '), 14)), {
             x: x + 2,
             y: y - 11,
             size: 7,
@@ -457,18 +469,41 @@ export async function exportAnnotatedPDF(
     }
   }
 
-  const modifiedBytes = await pdfDoc.save()
-  const blob = new Blob([modifiedBytes as unknown as BlobPart], {
+  return await pdfDoc.save()
+}
+
+/**
+ * Trigger a browser download for already-generated PDF bytes.
+ */
+export function downloadPdfBytes(bytes: Uint8Array, filename: string): void {
+  const blob = new Blob([bytes as unknown as BlobPart], {
     type: 'application/pdf',
   })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
+  a.style.display = 'none'
   a.href = url
-  a.download = `annotated-${Date.now()}.pdf`
+  a.download = filename
   document.body.appendChild(a)
   a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  // Defer cleanup so the browser has a chance to start the download before the
+  // object URL is revoked — an immediate revoke can silently cancel it.
+  setTimeout(() => {
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }, 1000)
+}
+
+/**
+ * Convert PDF bytes to a data URL for storage in IndexedDB history.
+ */
+export function pdfBytesToDataUrl(bytes: Uint8Array): string {
+  let binary = ''
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
+  }
+  return `data:application/pdf;base64,${btoa(binary)}`
 }
 
 /**
@@ -509,7 +544,7 @@ function buildReferencePopupContent(
  */
 export async function exportAnnotatedReferencePDF(
   annotations: Annotation[]
-): Promise<void> {
+): Promise<Uint8Array> {
   const refAnns = annotations.filter(
     (a) =>
       a.referencePage &&
@@ -601,16 +636,5 @@ export async function exportAnnotatedReferencePDF(
     }
   }
 
-  const modifiedBytes = await pdfDoc.save()
-  const blob = new Blob([modifiedBytes as unknown as BlobPart], {
-    type: 'application/pdf',
-  })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `annotated-reference-${Date.now()}.pdf`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  return await pdfDoc.save()
 }

@@ -83,6 +83,53 @@ export interface ClaimResult {
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+  /** Verdict structured into the message so the UI can render a verdict card
+   *  instead of plain text. Only present on claim-verification responses. */
+  verdict?: Verdict
+  evidence?: string
+  referencePage?: number
+  isVerification?: boolean
+}
+
+/** A saved annotated document in the export history. */
+export interface ExportRecord {
+  id: string
+  type: 'brochure' | 'reference'
+  brochureName: string
+  referenceName: string
+  createdAt: string
+  pages: number
+  annotationCount: number
+  verdicts: { verified: number; partial: number; unsupported: number }
+  sizeBytes: number
+  /** Key of the stored PDF binary in the IndexedDB history-files store */
+  fileId: string
+}
+
+/** Audit log event types — high-level application actions. */
+export type AuditAction =
+  | 'app_open'
+  | 'brochure_uploaded'
+  | 'reference_uploaded'
+  | 'validation_run'
+  | 'validation_applied'
+  | 'export_pdf'
+  | 'export_reference_pdf'
+  | 'claim_verified'
+  | 'import_json'
+  | 'export_deleted'
+  | 'clear_all'
+  | 'brochure_generated'
+  | 'brochure_pdf_exported'
+
+/** A single entry in the application audit log. */
+export interface AuditEvent {
+  id: string
+  timestamp: string
+  action: AuditAction
+  label: string
+  details?: Record<string, unknown>
+  severity: 'info' | 'success' | 'warning' | 'error'
 }
 
 export interface ChatSession {
@@ -130,4 +177,99 @@ export interface TextItemWithPos {
   fontName: string
   hasEOL: boolean
   transform: number[]
+}
+
+/* ────────────────────────────────────────────── */
+/*  Medical Brochure Generator                    */
+/* ────────────────────────────────────────────── */
+
+export type BrochureElementType =
+  | 'heading'
+  | 'subheading'
+  | 'body'
+  | 'callout'
+  | 'list-item'
+  | 'footer'
+  | 'image-placeholder'
+
+/** Status of a generated image for an image-placeholder element. */
+export type BrochureImageStatus = 'none' | 'loading' | 'ready' | 'error'
+
+export interface BrochureElement {
+  id: string
+  type: BrochureElementType
+  text: string
+  fontSize?: number
+  fontWeight?: 'normal' | 'bold' | 'semibold' | 'italic'
+  textAlign?: 'left' | 'center' | 'right'
+  marginTop?: number
+  marginBottom?: number
+  isClaim?: boolean
+  /** Detailed description of the illustration to generate for this slot (set by the AI). */
+  imagePrompt?: string
+  /** PNG data URL of the generated image. In-memory only — NOT persisted to localStorage. */
+  imageSrc?: string
+  imageStatus?: BrochureImageStatus
+  /** Model that produced `imageSrc`. */
+  imageModel?: string
+  // ── Canva-like freeform layout ──────────────────────────
+  /** Absolute position inside content area (px, 0 = flow). When set, element is absolutely positioned. */
+  x?: number
+  y?: number
+  /** Explicit size for freeform elements (px). Defaults to auto/content. */
+  width?: number
+  height?: number
+  /** Text / element color (hex). Overrides template/claim color. */
+  color?: string
+  /** Background fill for callout / shape-like elements */
+  backgroundColor?: string
+  /** Font family key — see FONT_FAMILIES */
+  fontFamily?: string
+  /** Rotation in degrees */
+  rotation?: number
+  /** Opacity 0-1 */
+  opacity?: number
+  /** Letter spacing in px */
+  letterSpacing?: number
+  /** Line height multiplier */
+  lineHeight?: number
+  /** Border radius in px */
+  borderRadius?: number
+  /** Shadow */
+  shadow?: boolean
+  /** Text transform */
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+  /** Underline */
+  underline?: boolean
+}
+
+export interface BrochurePage {
+  pageNumber: number
+  elements: BrochureElement[]
+  /** Page background (hex or gradient token). Used by Canva-like editor. */
+  backgroundColor?: string
+}
+
+export type BrochureTemplateId =
+  | 'modern-minimal'
+  | 'clinical-blue'
+  | 'vibrant-wellness'
+  | 'elegant-corporate'
+  | 'tri-fold'
+
+export interface BrochureDesign {
+  id: string
+  brandName: string
+  tagline: string
+  primaryColor: string
+  secondaryColor: string
+  accentColor: string
+  /** Visual template used to generate and render this design */
+  templateId: BrochureTemplateId
+  /** User-requested page count (1-6) — actual pages.length should match */
+  pageCount: number
+  pages: BrochurePage[]
+  footerText: string
+  createdAt: string
+  updatedAt: string
 }

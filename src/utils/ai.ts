@@ -25,7 +25,7 @@ export interface AIResult {
   endOffset: number
 }
 
-async function callLLM(
+export async function callLLM(
   provider: ProviderConfig,
   model: string,
   systemPrompt: string,
@@ -566,7 +566,7 @@ interface ScoredPage {
   hits: number
 }
 
-function findRelevantReferenceChunks(
+export function findRelevantReferenceChunks(
   brochureText: string,
   referencePages: Array<{ page: number; text: string }>,
   topN = 3
