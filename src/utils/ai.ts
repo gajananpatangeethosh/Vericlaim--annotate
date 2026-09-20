@@ -38,14 +38,20 @@ export async function callLLM(
   const MAX_ATTEMPTS = 3
 
   const attempt = async (): Promise<Response> => {
+    // OpenRouter uses custom headers for community stats. Other OpenAI-
+    // compatible endpoints (Gemini/Vertex, Groq, NVIDIA, etc.) reject those
+    // headers in the CORS preflight, which shows up as "Failed to fetch".
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/json',
+    }
+    if (provider.id === 'openrouter') {
+      headers['HTTP-Referer'] = window.location.origin
+      headers['X-Title'] = 'VeriClaim'
+    }
     return fetch(provider.baseUrl, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': window.location.origin,
-        'X-Title': 'VeriClaim',
-      },
+      headers,
       body: JSON.stringify({
         model,
         messages: [
@@ -83,7 +89,76 @@ export async function callLLM(
   }
 
   const data = await response.json()
-  return data.choices?.[0]?.message?.content || ''
+  const content = extractContent(data)
+
+  // Free / routed models (e.g. openrouter/free) sometimes return an empty
+  // message on transient failures. Retry a couple of times before giving up.
+  if (!content.trim()) {
+    for (let i = 0; i < 2; i++) {
+      await new Promise((r) => setTimeout(r, 800 * (i + 1)))
+      try {
+        const retryResponse = await attempt()
+        if (!retryResponse.ok) continue
+        const retryData = await retryResponse.json()
+        const retryContent = extractContent(retryData)
+        if (retryContent.trim()) return retryContent
+      } catch {
+        // transient network/parse error — keep retrying, then fall through
+      }
+    }
+  }
+
+  return content
+}
+
+/**
+ * Extract assistant text from the widest possible set of chat-completions
+ * response shapes. Some models/providers don't put the answer in the standard
+ * `choices[0].message.content` field:
+ *   - Reasoning models (DeepSeek R1, o-series) return `content: null` and put
+ *     the answer in `reasoning_content` / `reasoning`
+ *   - Multimodal models return `content` as an array of blocks
+ *   - Anthropic-style gateways return `content` at the top level
+ *   - Legacy completions return `choices[0].text`
+ */
+function extractContent(data: any): string {
+  if (!data) return ''
+
+  const choice = data.choices?.[0]
+  if (choice) {
+    const msg = choice.message
+    if (msg) {
+      const content = msg.content
+      if (typeof content === 'string' && content.trim()) return content.trim()
+      if (Array.isArray(content)) {
+        const text = content
+          .map((block: any) => block?.text ?? '')
+          .filter(Boolean)
+          .join('\n')
+        if (text.trim()) return text.trim()
+      }
+      const reasoning = msg.reasoning_content ?? msg.reasoning
+      if (typeof reasoning === 'string' && reasoning.trim()) return reasoning.trim()
+    }
+    // Legacy completions API: choices[0].text
+    if (typeof choice.text === 'string' && choice.text.trim()) return choice.text.trim()
+  }
+
+  // Anthropic-compatible / provider-specific top-level text fields
+  if (data.content) {
+    if (typeof data.content === 'string' && data.content.trim()) return data.content.trim()
+    if (Array.isArray(data.content)) {
+      const text = data.content
+        .map((block: any) => block?.text ?? '')
+        .filter(Boolean)
+        .join('\n')
+      if (text.trim()) return text.trim()
+    }
+  }
+  if (typeof data.output_text === 'string' && data.output_text.trim()) return data.output_text.trim()
+  if (typeof data.completion === 'string' && data.completion.trim()) return data.completion.trim()
+
+  return ''
 }
 
 export async function extractTextFromPDF(

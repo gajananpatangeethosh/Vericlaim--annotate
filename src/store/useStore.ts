@@ -13,6 +13,8 @@ import {
   API_KEY,
   GROQ_API_KEY,
   GEMINI_API_KEY,
+  VERTEX_API_KEY,
+  EDEN_IMAGE_API_KEY,
   NVIDIA_API_KEY,
   CEREBRAS_API_KEY,
   MISTRAL_API_KEY,
@@ -21,6 +23,7 @@ import {
 
 const CODE_KEYS: Record<AIProvider, string> = {
   openrouter: API_KEY,
+  vertex: VERTEX_API_KEY,
   groq: GROQ_API_KEY,
   gemini: GEMINI_API_KEY,
   nvidia: NVIDIA_API_KEY,
@@ -218,12 +221,16 @@ interface AppState {
   exportBrochurePdf: () => Promise<void>
   resetBrochure: () => void
 
-  /* --- Brochure image generation (Puter.js) --- */
+  /* --- Brochure image generation --- */
+  imageEngine: 'puter' | 'eden'
   imageModel: string
+  edenImageApiKey: string
   brochureImageLoading: boolean
   brochureImageProgress: { done: number; total: number }
   brochureImageError: string | null
+  setImageEngine: (e: 'puter' | 'eden') => void
   setImageModel: (m: string) => void
+  setEdenImageApiKey: (k: string) => void
   generateBrochureImages: () => Promise<void>
   generateBrochureElementImage: (pageNum: number, elementId: string, promptOverride?: string) => Promise<void>
   hydrateBrochureImages: () => Promise<void>
@@ -316,8 +323,10 @@ export const useStore = create<AppState>()(
       brochureTemplate: 'clinical-blue' as import('../types').BrochureTemplateId,
       brochurePageCount: 3,
 
-      /* --- Brochure image generation (Puter.js) --- */
+      /* --- Brochure image generation --- */
+      imageEngine: 'puter',
       imageModel: '',
+      edenImageApiKey: EDEN_IMAGE_API_KEY,
       brochureImageLoading: false,
       brochureImageProgress: { done: 0, total: 0 },
       brochureImageError: null,
@@ -792,16 +801,20 @@ export const useStore = create<AppState>()(
         try {
           const provider = getProviderConfig(get().aiProvider)
           const model = get().aiModel
+          // OpenRouter-specific headers; other endpoints reject them in CORS preflight.
+          const headers: Record<string, string> = {
+            Authorization: `Bearer ${state.apiKeys[get().aiProvider] || API_KEY}`,
+            'Content-Type': 'application/json',
+          }
+          if (provider.id === 'openrouter') {
+            headers['HTTP-Referer'] = window.location.origin
+            headers['X-Title'] = 'VeriClaim'
+          }
           const response = await fetch(
             provider.baseUrl,
             {
               method: 'POST',
-              headers: {
-                Authorization: `Bearer ${state.apiKeys[get().aiProvider] || API_KEY}`,
-                'Content-Type': 'application/json',
-                'HTTP-Referer': window.location.origin,
-                'X-Title': 'VeriClaim',
-              },
+              headers,
               body: JSON.stringify({
                 model,
                 messages: [
@@ -1065,9 +1078,13 @@ export const useStore = create<AppState>()(
         })
       },
 
-      /* --- Brochure image generation (Puter.js, free — users auth with their own Puter account) --- */
+      /* --- Brochure image generation (Puter free-tier + Eden AI) --- */
 
+      setImageEngine: (e) => {
+        set({ imageEngine: e, imageModel: e === 'eden' ? 'openai/gpt-image-1-mini' : '' })
+      },
       setImageModel: (m) => set({ imageModel: m }),
+      setEdenImageApiKey: (k) => set({ edenImageApiKey: k }),
 
       hydrateBrochureImages: async () => {
         const design = get().brochureDesign
@@ -1101,11 +1118,13 @@ export const useStore = create<AppState>()(
         get().updateBrochureElement(pageNum, elementId, { imageStatus: 'loading' })
 
         try {
-          const { generateImage, buildDefaultImagePrompt } = await import('../utils/image-gen')
+          const { generateImageWithEngine, buildDefaultImagePrompt } = await import('../utils/image-gen')
+          const engine = get().imageEngine
           const prompt = promptOverride?.trim() || el.imagePrompt?.trim() || buildDefaultImagePrompt(el, design)
-          const result = await generateImage(prompt, {
+          const result = await generateImageWithEngine(engine, prompt, {
             model: get().imageModel,
             quality: 'low',
+            apiKey: get().edenImageApiKey,
           })
           const { saveBrochureImage } = await import('../utils/idb')
           await saveBrochureImage(BROCHURE_IMAGE_KEY_PREFIX + elementId, result.dataUrl)
@@ -1136,9 +1155,11 @@ export const useStore = create<AppState>()(
           brochureImageProgress: { done: 0, total: placeholders.length },
         })
 
-        const { generateImage, buildDefaultImagePrompt } = await import('../utils/image-gen')
+        const { generateImageWithEngine, buildDefaultImagePrompt } = await import('../utils/image-gen')
         const { saveBrochureImage, BROCHURE_IMAGE_KEY_PREFIX } = await import('../utils/idb')
+        const engine = get().imageEngine
         const imageModel = get().imageModel
+        const edenKey = get().edenImageApiKey
 
         try {
           for (let i = 0; i < placeholders.length; i++) {
@@ -1146,7 +1167,11 @@ export const useStore = create<AppState>()(
             get().updateBrochureElement(page.pageNumber, el.id, { imageStatus: 'loading' })
             try {
               const prompt = el.imagePrompt?.trim() || buildDefaultImagePrompt(el, design)
-              const result = await generateImage(prompt, { model: imageModel, quality: 'low' })
+              const result = await generateImageWithEngine(engine, prompt, {
+                model: imageModel,
+                quality: 'low',
+                apiKey: edenKey,
+              })
               await saveBrochureImage(BROCHURE_IMAGE_KEY_PREFIX + el.id, result.dataUrl)
               get().updateBrochureElement(page.pageNumber, el.id, {
                 imageSrc: result.dataUrl,
@@ -1302,6 +1327,8 @@ export const useStore = create<AppState>()(
         brochureTemplate: state.brochureTemplate,
         brochurePageCount: state.brochurePageCount,
         imageModel: state.imageModel,
+        imageEngine: state.imageEngine,
+        edenImageApiKey: state.edenImageApiKey,
         apiKeys: state.apiKeys,
         aiProvider: state.aiProvider,
         aiModel: state.aiModel,

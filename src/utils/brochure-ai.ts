@@ -378,7 +378,10 @@ export async function generateBrochureFromPrompt(
   onProgress?.('Processing AI design output…')
 
   if (!raw || !raw.trim()) {
-    throw new Error('AI returned an empty response. Try again or switch model/provider.')
+    throw new Error(
+      `Model "${model}" (${provider.label}) returned an empty response. ` +
+      `This can happen with free/routed endpoints under load — try again, or switch model/provider.`
+    )
   }
 
   // --- robust JSON extraction (LLMs often wrap in fences or add trailing commas) ---

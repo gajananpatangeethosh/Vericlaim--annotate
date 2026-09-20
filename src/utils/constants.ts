@@ -106,13 +106,37 @@ export const VERDICT_ICONS: Record<Verdict, string> = {
   unsupported: '❌',
 }
 
+// Model ids match puter.ai.txt2img() — bare provider names, NOT OpenRouter-style
+// ("openai/gpt-image-2"), which Puter rejects with HTTP 400.
 export const IMAGE_GEN_MODELS: Array<{ id: string; label: string; description?: string }> = [
   { id: '', label: 'Default (gpt-image-1-mini)' },
-  { id: 'openai/gpt-image-2', label: 'GPT Image 2' },
-  { id: 'google/gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image' },
-  { id: 'black-forest-labs/flux.2-flex', label: 'FLUX.2 Flex' },
-  { id: 'qwen/qwen-image-2.0', label: 'Qwen Image 2.0' },
-  { id: 'stabilityai/stable-diffusion-3-medium', label: 'Stable Diffusion 3' },
+  { id: 'gpt-image-2', label: 'GPT Image 2' },
+  { id: 'gpt-image-1.5', label: 'GPT Image 1.5' },
+  { id: 'gpt-image-1', label: 'GPT Image 1' },
+  { id: 'gpt-image-1-mini', label: 'GPT Image 1 Mini' },
+  { id: 'gemini-3-pro-image', label: 'Gemini 3 Pro Image' },
+  { id: 'gemini-2.5-flash-image-preview', label: 'Gemini 2.5 Flash Image' },
+  { id: 'dall-e-3', label: 'DALL·E 3' },
+]
+
+// Model strings for Eden AI image generation. Sent to POST /v3/universal-ai as
+// `model: "image/generation/{id}"`. Providers/models verified against
+// https://www.edenai.co/docs/v3/expert-models/features/image/generation
+export const EDEN_IMAGE_MODELS: Array<{ id: string; label: string; resolution?: string }> = [
+  { id: 'openai/gpt-image-1-mini', label: 'GPT Image 1 Mini', resolution: '1024x1024' },
+  { id: 'openai/gpt-image-1', label: 'GPT Image 1', resolution: '1024x1024' },
+  { id: 'openai/gpt-image-1.5', label: 'GPT Image 1.5', resolution: '1024x1024' },
+  { id: 'openai/gpt-image-2', label: 'GPT Image 2', resolution: '1024x1024' },
+  { id: 'google/gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image', resolution: '1024x1024' },
+  { id: 'google/gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image', resolution: '1024x1024' },
+  { id: 'google/imagen-4.0-generate-001', label: 'Imagen 4.0', resolution: '1024x1024' },
+  { id: 'bytedance/seedream-4-0-250828', label: 'Seedream 4.0', resolution: '1024x1024' },
+  { id: 'stabilityai/stable-diffusion-xl-1024-v1-0', label: 'Stable Diffusion XL', resolution: '1024x1024' },
+]
+
+export const IMAGE_ENGINES: Array<{ id: 'puter' | 'eden'; label: string; description?: string }> = [
+  { id: 'puter', label: 'Puter (Free)', description: 'Free, no key required' },
+  { id: 'eden', label: 'Eden AI', description: 'Many providers, one key' },
 ]
 
 /* ── Brochure Templates ────────────────────────────────────────── */

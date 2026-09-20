@@ -1,5 +1,6 @@
 export type AIProvider =
   | 'openrouter'
+  | 'vertex'
   | 'groq'
   | 'gemini'
   | 'nvidia'
@@ -24,6 +25,14 @@ export const PROVIDERS: Record<AIProvider, ProviderConfig> = {
     models: ['openrouter/free'],
     defaultModel: 'openrouter/free',
     keyPlaceholder: 'sk-or-...',
+  },
+  vertex: {
+    id: 'vertex',
+    label: 'Google Vertex',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    models: ['gemini-2.5-flash'],
+    defaultModel: 'gemini-2.5-flash',
+    keyPlaceholder: 'AQ.Ab8...',
   },
   groq: {
     id: 'groq',
@@ -94,6 +103,7 @@ export const PROVIDERS: Record<AIProvider, ProviderConfig> = {
 
 export const PROVIDER_IDS: AIProvider[] = [
   'openrouter',
+  'vertex',
   'groq',
   'gemini',
   'nvidia',
